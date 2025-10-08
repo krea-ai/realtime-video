@@ -303,7 +303,7 @@ class GenerateParams(BaseModel):
     keep_first_frame: bool = False
     kv_cache_num_frames: int = 3
     num_blocks: int = 9
-    num_denoising_steps: int | None = 4
+    num_denoising_steps: int | None = 6 # use 4 for performance
 
     block_on_frame: bool = False
 
@@ -755,7 +755,7 @@ def compile_warmup_models(config, models: Models):
 
 # SECTION - SERVER & HANDLING
 async def lifespan(app: FastAPI):
-    app.state.config = load_merge_config(os.getenv("CONFIG", "configs/self_forcing_server.yaml"))
+    app.state.config = load_merge_config(os.getenv("CONFIG", "configs/self_forcing_server_14b.yaml"))
     app.state.models = load_all(app.state.config)
     yield
 
