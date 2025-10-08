@@ -310,7 +310,10 @@ class GenerateParams(BaseModel):
     block_on_frame: bool = False
 
     input_video: str | None = None
-    start_frame: bytes | str | Image.Image | None = None
+    start_frame: bytes | str | None = None
+
+    class Config:
+        arbitrary_types_allowed = True
     
 
 class GenerationSession:
@@ -397,8 +400,10 @@ class GenerationSession:
             actual_num_blocks = latents.shape[1] // self.num_frame_per_block - 1
             self.num_blocks = min(actual_num_blocks, self.params.num_blocks)
             print("final num blocks: ", self.num_blocks)
-        # if self.params.start_frame is not None:
-            
+        if self.params.start_frame is not None:
+            print("Setting up start frame")
+            self.setup_start_frame(self.params.start_frame, models)
+
         self.last_pred: Optional[torch.Tensor] = None
     
     def to(self, gpu):
@@ -505,9 +510,7 @@ class GenerationSession:
         tensor = tensor.to("cuda").sub_(0.5).mul_(2.0)
         tensors = torch.stack([tensor] * frame_cache_len)
         latents = encode_video_latent(models.vae_encoder, [None]*55, resample_to=16, max_frames=81, video_path_or_url=None, frames=tensors, height=480, width=832, stream=False)[0].transpose(0, 1)[None]
-        last_frame_latent = latents[:1,]
-        self.last_frame_latents = last_frame_latent
-        self.latents = latents
+        self.resume_latents = latents
 
     def recompute_kv_cache(self, models: Models):
         if self.block_idx == 0:
@@ -572,14 +575,6 @@ class GenerationSession:
         assert model_input_start_frame is not None
         frame_ids: list[str | None] = []
         
-        resuming = idx == 0 and self.resume_latents is not None
-        if resuming:
-            num_frames_to_encode = 13
-        elif idx == 0:
-            num_frames_to_encode = 9
-        else:
-            num_frames_to_encode = 12
-        
         noisy_input = self.noise[:, self.current_start_frame:self.current_start_frame + models.pipeline.num_frame_per_block]
         
         if self.interpolated_prompt_embeds:
@@ -631,11 +626,6 @@ class GenerationSession:
         self.all_latents[:, self.current_start_frame:self.current_start_frame + models.pipeline.num_frame_per_block] = denoised_pred
         self.last_pred = denoised_pred
         decode_start = time.time()
-
-        # resumin
-        if resuming:
-            print("Prepending last frame latent")
-            denoised_pred = torch.cat([self.last_frame_latent, denoised_pred], dim=1)
         
         if (self.params.width, self.params.height) != (832, 480):
             print("Falling back to eager for VAE decode")
@@ -648,10 +638,7 @@ class GenerationSession:
         
         self.frame_context_cache.extend(pixels.split(1, dim=1))
         if idx == 0:
-            if resuming:
-                pixels = pixels[:, 1:, :, :, :]  # Skip first 1 frame of first block
-            else:
-                pixels = pixels[:, 3:, :, :, :]  # Skip first 3 frames of first block
+            pixels = pixels[:, 3:, :, :, :]  # Skip first 3 frames of first block
 
         self.most_recent_frame = pixels[:, -1:, ...].clone()
 
@@ -732,6 +719,26 @@ async def upload_video(file: UploadFile = File(...)):
     finally:
         file.file.close()
 
+@app.post("/upload_start_frame")
+async def upload_start_frame(file: UploadFile = File(...)):
+    """Upload a start frame image and return its temporary path for use in generation"""
+    try:
+        # Create a temporary file with the original extension
+        suffix = Path(file.filename).suffix if file.filename else ".jpg"
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        
+        # Copy uploaded file to temp file
+        with temp_file:
+            shutil.copyfileobj(file.file, temp_file)
+        
+        log.info(f"Start frame uploaded to temporary file: {temp_file.name}")
+        return JSONResponse({"path": temp_file.name, "filename": file.filename})
+    except Exception as e:
+        log.error(f"Error uploading start frame: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        file.file.close()
+
 generate_pool = ThreadPoolExecutor(max_workers=1)
 encode_pool = ThreadPoolExecutor(max_workers=24)
 
@@ -756,6 +763,15 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
         params.block_on_frame = True
         if params.seed is None:
             params.seed = random.randint(0, 2**24 - 1)
+
+        # Convert start_frame path to PIL Image if provided
+        if params.start_frame is not None and isinstance(params.start_frame, str):
+            try:
+                params.start_frame = Image.open(params.start_frame).convert("RGB")
+                log.info(f"Loaded start frame image: {params.start_frame.size}")
+            except Exception as e:
+                log.error(f"Failed to load start frame: {e}")
+                params.start_frame = None
 
         frame_queue = asyncio.Queue[asyncio.Future[bytes]]()
         async def frame_sender():
