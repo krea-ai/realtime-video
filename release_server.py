@@ -310,7 +310,7 @@ class GenerateParams(BaseModel):
     block_on_frame: bool = False
 
     input_video: str | None = None
-    start_frame: bytes | str | None = None
+    start_frame: bytes | str | Image.Image | None = None
     
 
 class GenerationSession:
@@ -807,14 +807,6 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
             models=models
         )
         session = new_session()
-
-        if params.resume_latents is not None:
-            print("Resuming from latents")
-            params.resume_latents = "latents_start.safetensors"
-            if ".safetensors" in str(params.resume_latents):
-                resume_data = safetensors.torch.load_file(str(params.resume_latents))
-            session.resume_latents = resume_data["latents"].to(torch.bfloat16).to(session.gpu)
-            session.last_frame_latent = resume_data["last_frame_latents"].to(torch.bfloat16).to(session.gpu)
 
         new_data_event = asyncio.Event()
         async def generate_loop():
