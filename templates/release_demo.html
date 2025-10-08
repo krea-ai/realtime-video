@@ -217,7 +217,8 @@
 
         textarea,
         input[type="number"],
-        input[type="text"] {
+        input[type="text"],
+        input[type="file"] {
             width: 100%;
             padding: 14px 16px;
             border-radius: 12px;
@@ -331,6 +332,7 @@
                 <div class="button-row">
                     <button id="startBtn" class="primary" type="button">Start</button>
                     <button id="stopBtn" class="secondary" type="button" disabled>Stop</button>
+                    <button id="downloadBtn" class="secondary" type="button" disabled>Download Video</button>
                 </div>
                 <div class="slider-block">
                     <label for="playbackFps">Playback</label>
@@ -341,6 +343,20 @@
             <div class="prompt-block">
                 <label for="prompt">Prompt</label>
                 <textarea id="prompt" placeholder="Describe the short video you want to synthesize..."></textarea>
+            </div>
+
+            <div class="field">
+                <label for="inputVideo">Input Video (optional)</label>
+                <input id="inputVideo" type="file" accept="video/*">
+                <span id="videoStatus" style="font-size: 12px; color: var(--text-muted); margin-top: 6px; display: block;"></span>
+            </div>
+
+            <div id="denoisingStrengthContainer" class="field slider-field" style="display: none;">
+                <label for="denoisingStrength">Denoising Strength</label>
+                <div class="slider-row">
+                    <input id="denoisingStrength" type="range" min="0.4" max="1.0" step="0.05" value="1.0">
+                    <span id="denoisingStrengthValue" class="slider-value">1.0</span>
+                </div>
             </div>
 
             <div class="param-grid">
@@ -536,12 +552,18 @@
             const numBlocksStatusValue = document.getElementById("numBlocksStatusValue");
             const startBtn = document.getElementById("startBtn");
             const stopBtn = document.getElementById("stopBtn");
+            const downloadBtn = document.getElementById("downloadBtn");
             const randomSeedBtn = document.getElementById("randomSeedBtn");
             const playbackSlider = document.getElementById("playbackFps");
             const playbackValue = document.getElementById("playbackFpsValue");
             const statusLine = document.getElementById("statusLine");
             const canvas = document.getElementById("videoCanvas");
             const ctx = canvas.getContext("2d");
+            const inputVideoInput = document.getElementById("inputVideo");
+            const videoStatus = document.getElementById("videoStatus");
+            const denoisingStrengthContainer = document.getElementById("denoisingStrengthContainer");
+            const denoisingStrengthInput = document.getElementById("denoisingStrength");
+            const denoisingStrengthValue = document.getElementById("denoisingStrengthValue");
 
             const setText = (element, value) => {
                 if (element) {
@@ -555,6 +577,10 @@
             let playbackTimer = null;
             let playbackFps = Number(playbackSlider?.value || 8);
             setText(playbackValue, String(playbackFps));
+            let uploadedVideoPath = null;
+            let recordedFrames = [];
+            let mediaRecorder = null;
+            let recordedChunks = [];
 
             const syncNumBlocksDisplay = (value) => {
                 const normalizedValue = String(value);
@@ -575,6 +601,10 @@
             const setButtons = (running) => {
                 startBtn.disabled = running;
                 stopBtn.disabled = !running;
+            };
+
+            const enableDownload = (enable) => {
+                downloadBtn.disabled = !enable;
             };
 
             const randomSeed = () => Math.floor(Math.random() * (1 << 24));
@@ -599,6 +629,51 @@
                 }
             });
 
+            denoisingStrengthInput.addEventListener("input", () => {
+                const value = Number(denoisingStrengthInput.value).toFixed(2);
+                setText(denoisingStrengthValue, value);
+            });
+
+            inputVideoInput.addEventListener("change", async () => {
+                const file = inputVideoInput.files[0];
+                if (!file) {
+                    uploadedVideoPath = null;
+                    setText(videoStatus, "");
+                    denoisingStrengthContainer.style.display = "none";
+                    return;
+                }
+
+                setText(videoStatus, "Uploading video...");
+                const formData = new FormData();
+                formData.append("file", file);
+
+                try {
+                    const response = await fetch("/upload_video", {
+                        method: "POST",
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        throw new Error("Upload failed");
+                    }
+
+                    const result = await response.json();
+                    if (result.error) {
+                        throw new Error(result.error);
+                    }
+
+                    uploadedVideoPath = result.path;
+                    setText(videoStatus, "✓ " + result.filename + " uploaded");
+                    log("Video uploaded: " + result.filename + " -> " + result.path);
+                    denoisingStrengthContainer.style.display = "flex";
+                } catch (error) {
+                    uploadedVideoPath = null;
+                    setText(videoStatus, "✗ Upload failed: " + error.message);
+                    log("Video upload error: " + error.message);
+                    denoisingStrengthContainer.style.display = "none";
+                }
+            });
+
             const closeSocket = (reason) => {
                 if (websocket && (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING)) {
                     websocket.close(1000, reason || "client closing");
@@ -615,6 +690,68 @@
                 if (typeof bitmap.close === "function") {
                     bitmap.close();
                 }
+            };
+
+            const startRecording = () => {
+                recordedFrames = [];
+                recordedChunks = [];
+                
+                const stream = canvas.captureStream(playbackFps);
+                const options = { mimeType: 'video/webm;codecs=vp9' };
+                
+                // Fallback to VP8 if VP9 not supported
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options.mimeType = 'video/webm;codecs=vp8';
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        options.mimeType = 'video/webm';
+                    }
+                }
+                
+                mediaRecorder = new MediaRecorder(stream, options);
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    enableDownload(recordedChunks.length > 0);
+                };
+                
+                mediaRecorder.start();
+                log("Recording started");
+            };
+
+            const stopRecording = () => {
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                    log("Recording stopped");
+                }
+            };
+
+            const downloadVideo = () => {
+                if (recordedChunks.length === 0) {
+                    log("No video data to download");
+                    return;
+                }
+                
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                a.download = 'generated-video-' + timestamp + '.webm';
+                document.body.appendChild(a);
+                a.click();
+                
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 100);
+                
+                log("Video downloaded");
             };
 
             const startPlaybackLoop = () => {
@@ -674,6 +811,12 @@
                 };
                 syncNumBlocksDisplay(payload.num_blocks);
 
+                // Include uploaded video path if available
+                if (uploadedVideoPath) {
+                    payload.input_video = uploadedVideoPath;
+                    payload.strength = Number(denoisingStrengthInput.value);
+                }
+
                 const rawSeed = seedInput.value.trim();
                 if (rawSeed !== "") {
                     const numericSeed = Number(rawSeed);
@@ -687,6 +830,7 @@
                 decodeQueue = Promise.resolve();
                 playbackFps = Number(playbackSlider.value) || 8;
                 setText(playbackValue, String(playbackFps));
+                startRecording();
                 startPlaybackLoop();
 
                 try {
@@ -760,6 +904,7 @@
                     decodeQueue = Promise.resolve();
                     frameBuffer = [];
                     stopPlaybackLoop();
+                    setTimeout(() => stopRecording(), 500);
                 });
 
                 websocket.addEventListener("error", () => {
@@ -776,10 +921,12 @@
                 closeSocket("stopped by user");
                 setButtons(false);
                 stopPlaybackLoop();
+                setTimeout(() => stopRecording(), 500);
             };
 
             startBtn.addEventListener("click", startGeneration);
             stopBtn.addEventListener("click", stopGeneration);
+            downloadBtn.addEventListener("click", downloadVideo);
             window.addEventListener("beforeunload", () => closeSocket("page exit"));
         })();
     </script>

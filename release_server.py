@@ -20,6 +20,8 @@ from typing import Callable, TYPE_CHECKING
 import queue
 import uuid
 import socket
+import tempfile
+import shutil
 
 if TYPE_CHECKING:
     from utils.wan_wrapper import WanDiffusionWrapper, WanTextEncoder
@@ -33,9 +35,9 @@ from utils.misc import AtomicCounter
 # External imports
 from omegaconf import OmegaConf
 from tqdm import tqdm
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ValidationError
 import torch
 import time
@@ -450,15 +452,6 @@ class GenerationSession:
             print(f"Killing from push_frame: {e}")
             self.dispose()
     
-    def drain_queue(self):
-        drained_frames: list[torch.Tensor] = []
-        while True:
-            try:
-                drained_frames.append(self.frame_queue.get_nowait())
-            except queue.Empty:
-                break
-        return drained_frames
-
     def encode_v2v(self, models: "Models", video_path_or_url: str, max_frames=None, resample_to=None):
         latents = encode_video_latent(models.vae_encoder,
                                     encode_vae_cache=[None] * 55,
@@ -471,53 +464,6 @@ class GenerationSession:
                                     )
         return latents
         
-
-    def _maybe_encode_v2v(
-        self,
-        models: "Models",
-        idx: int,
-        num_frames_to_encode: int,
-        noisy_input: torch.Tensor,
-        resuming: bool,
-    ) -> tuple[torch.Tensor, list[str | None], list[int]]:
-        """
-        Optionally encodes received V2V frames and blends them into the provided noisy_input.
-
-        Returns a tuple of (updated_noisy_input, frame_ids, current_denoising_step_list).
-        If no frames are available, returns inputs unchanged and the default denoising schedule.
-        """
-        frame_ids: list[str | None] = []
-
-        if (self.params.width, self.params.height) != (832, 480):
-            print("Falling back to eager for VAE")
-            ctx = torch.compiler.set_stance("force_eager")
-        else:
-            ctx = torch.compiler.set_stance("default")
-
-        with ctx:
-            latents, self.encode_vae_cache = encode_video_latent(
-                models.vae_encoder,
-                self.encode_vae_cache,
-                frames=frames_to_encode,
-                height=self.params.height,
-                width=self.params.width,
-                stream=idx > 0,
-            )
-
-            if resuming:
-                latents = latents[:, 1:, ...]
-
-            frame_ids = []
-            current_denoising_step_list = get_denoising_schedule(
-                self.zero_padded_timesteps, self.params.strength, steps=params.num_denoising_steps
-            )
-            denoising_strength_scaled = current_denoising_step_list[0] / 1000.0
-            latents = latents[None].to("cuda", dtype=self.noise.dtype).movedim(1, 2)
-            noisy_input = latents * (1.0 - denoising_strength_scaled) + noisy_input * denoising_strength_scaled
-
-
-        return noisy_input, frame_ids, current_denoising_step_list
-
     def init_models(self, models: Models):
         for block in models.pipeline.generator.model.blocks:
             block.self_attn.local_attn_size = -1
@@ -563,20 +509,6 @@ class GenerationSession:
         self.last_frame_latents = last_frame_latent
         self.latents = latents
 
-        
-
-
-    def get_session_context_state(self, models: Models):
-        context_frames = self.get_clean_context_frames(models)
-        most_recent_frame = self.most_recent_frame[0].to(dtype=torch.float16, device=self.gpu)
-        last_frame_latent, cache = encode_video_latent(models.vae_encoder, [None]*55, frames=most_recent_frame, height=self.params.height, width=self.params.width, stream=False)
-        last_frame_latent = last_frame_latent[None].movedim(1,2)
-        del cache
-        return {
-            "latents": context_frames.contiguous(),
-            "last_frame_latents": last_frame_latent.contiguous(),
-        }
-    
     def recompute_kv_cache(self, models: Models):
         if self.block_idx == 0:
             models.pipeline._initialize_kv_cache(batch_size=1, dtype=torch.bfloat16, device=self.gpu)
@@ -779,6 +711,26 @@ async def root():
         log.warning("Release demo template missing at %s", demo_path)
         return HTMLResponse("<h1>Self-Forcing</h1><p>Demo UI not found.</p>", status_code=404)
     return HTMLResponse(demo_path.read_text(encoding="utf-8"))
+
+@app.post("/upload_video")
+async def upload_video(file: UploadFile = File(...)):
+    """Upload a video file and return its temporary path for use in generation"""
+    try:
+        # Create a temporary file with the original extension
+        suffix = Path(file.filename).suffix if file.filename else ".mp4"
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        
+        # Copy uploaded file to temp file
+        with temp_file:
+            shutil.copyfileobj(file.file, temp_file)
+        
+        log.info(f"Video uploaded to temporary file: {temp_file.name}")
+        return JSONResponse({"path": temp_file.name, "filename": file.filename})
+    except Exception as e:
+        log.error(f"Error uploading video: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        file.file.close()
 
 generate_pool = ThreadPoolExecutor(max_workers=1)
 encode_pool = ThreadPoolExecutor(max_workers=24)
