@@ -288,6 +288,56 @@
             color: var(--text-primary);
         }
 
+        .upload-field {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .upload-preview-container {
+            display: none;
+            margin-top: 12px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .upload-preview-container.show {
+            display: block;
+        }
+
+        .upload-preview-container img,
+        .upload-preview-container video {
+            width: 100%;
+            height: auto;
+            display: block;
+            max-height: 240px;
+            object-fit: contain;
+        }
+
+        .upload-label {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .clear-upload-btn {
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 8px;
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .clear-upload-btn:hover {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: rgba(239, 68, 68, 0.5);
+        }
+
         @media (max-width: 720px) {
             .action-row {
                 flex-direction: column;
@@ -345,10 +395,16 @@
                 <textarea id="prompt" placeholder="Describe the short video you want to synthesize..."></textarea>
             </div>
 
-            <div class="field">
-                <label for="inputVideo">Input Video (optional)</label>
+            <div class="field upload-field">
+                <div class="upload-label">
+                    <label for="inputVideo">Input Video (optional)</label>
+                    <button id="clearVideoBtn" class="clear-upload-btn" style="display: none;" type="button">Clear</button>
+                </div>
                 <input id="inputVideo" type="file" accept="video/*">
                 <span id="videoStatus" style="font-size: 12px; color: var(--text-muted); margin-top: 6px; display: block;"></span>
+                <div id="videoPreview" class="upload-preview-container">
+                    <video id="videoPreviewElement" controls></video>
+                </div>
             </div>
 
             <div id="denoisingStrengthContainer" class="field slider-field" style="display: none;">
@@ -356,6 +412,18 @@
                 <div class="slider-row">
                     <input id="denoisingStrength" type="range" min="0.4" max="1.0" step="0.05" value="1.0">
                     <span id="denoisingStrengthValue" class="slider-value">1.0</span>
+                </div>
+            </div>
+
+            <div class="field upload-field">
+                <div class="upload-label">
+                    <label for="startFrame">Start Frame Image (optional)</label>
+                    <button id="clearStartFrameBtn" class="clear-upload-btn" style="display: none;" type="button">Clear</button>
+                </div>
+                <input id="startFrame" type="file" accept="image/*">
+                <span id="startFrameStatus" style="font-size: 12px; color: var(--text-muted); margin-top: 6px; display: block;"></span>
+                <div id="startFramePreview" class="upload-preview-container">
+                    <img id="startFramePreviewElement" alt="Start frame preview">
                 </div>
             </div>
 
@@ -564,6 +632,14 @@
             const denoisingStrengthContainer = document.getElementById("denoisingStrengthContainer");
             const denoisingStrengthInput = document.getElementById("denoisingStrength");
             const denoisingStrengthValue = document.getElementById("denoisingStrengthValue");
+            const startFrameInput = document.getElementById("startFrame");
+            const startFrameStatus = document.getElementById("startFrameStatus");
+            const videoPreview = document.getElementById("videoPreview");
+            const videoPreviewElement = document.getElementById("videoPreviewElement");
+            const startFramePreview = document.getElementById("startFramePreview");
+            const startFramePreviewElement = document.getElementById("startFramePreviewElement");
+            const clearVideoBtn = document.getElementById("clearVideoBtn");
+            const clearStartFrameBtn = document.getElementById("clearStartFrameBtn");
 
             const setText = (element, value) => {
                 if (element) {
@@ -578,6 +654,7 @@
             let playbackFps = Number(playbackSlider?.value || 8);
             setText(playbackValue, String(playbackFps));
             let uploadedVideoPath = null;
+            let uploadedStartFramePath = null;
             let recordedFrames = [];
             let mediaRecorder = null;
             let recordedChunks = [];
@@ -634,14 +711,84 @@
                 setText(denoisingStrengthValue, value);
             });
 
+            startFrameInput.addEventListener("change", async () => {
+                const file = startFrameInput.files[0];
+                if (!file) {
+                    uploadedStartFramePath = null;
+                    setText(startFrameStatus, "");
+                    startFramePreview.classList.remove("show");
+                    clearStartFrameBtn.style.display = "none";
+                    return;
+                }
+
+                // Show preview
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    startFramePreviewElement.src = e.target.result;
+                    startFramePreview.classList.add("show");
+                    clearStartFrameBtn.style.display = "inline-block";
+                };
+                reader.readAsDataURL(file);
+
+                setText(startFrameStatus, "Uploading start frame...");
+                const formData = new FormData();
+                formData.append("file", file);
+
+                try {
+                    const response = await fetch("/upload_start_frame", {
+                        method: "POST",
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        throw new Error("Upload failed");
+                    }
+
+                    const result = await response.json();
+                    if (result.error) {
+                        throw new Error(result.error);
+                    }
+
+                    uploadedStartFramePath = result.path;
+                    setText(startFrameStatus, "✓ " + result.filename + " uploaded");
+                    log("Start frame uploaded: " + result.filename + " -> " + result.path);
+                } catch (error) {
+                    uploadedStartFramePath = null;
+                    setText(startFrameStatus, "✗ Upload failed: " + error.message);
+                    log("Start frame upload error: " + error.message);
+                    startFramePreview.classList.remove("show");
+                    clearStartFrameBtn.style.display = "none";
+                }
+            });
+
+            clearStartFrameBtn.addEventListener("click", () => {
+                startFrameInput.value = "";
+                uploadedStartFramePath = null;
+                setText(startFrameStatus, "");
+                startFramePreview.classList.remove("show");
+                clearStartFrameBtn.style.display = "none";
+                log("Start frame cleared");
+            });
+
             inputVideoInput.addEventListener("change", async () => {
                 const file = inputVideoInput.files[0];
                 if (!file) {
                     uploadedVideoPath = null;
                     setText(videoStatus, "");
                     denoisingStrengthContainer.style.display = "none";
+                    videoPreview.classList.remove("show");
+                    clearVideoBtn.style.display = "none";
                     return;
                 }
+
+                // Show preview
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    videoPreviewElement.src = e.target.result;
+                    videoPreview.classList.add("show");
+                    clearVideoBtn.style.display = "inline-block";
+                };
+                reader.readAsDataURL(file);
 
                 setText(videoStatus, "Uploading video...");
                 const formData = new FormData();
@@ -671,7 +818,19 @@
                     setText(videoStatus, "✗ Upload failed: " + error.message);
                     log("Video upload error: " + error.message);
                     denoisingStrengthContainer.style.display = "none";
+                    videoPreview.classList.remove("show");
+                    clearVideoBtn.style.display = "none";
                 }
+            });
+
+            clearVideoBtn.addEventListener("click", () => {
+                inputVideoInput.value = "";
+                uploadedVideoPath = null;
+                setText(videoStatus, "");
+                denoisingStrengthContainer.style.display = "none";
+                videoPreview.classList.remove("show");
+                clearVideoBtn.style.display = "none";
+                log("Video cleared");
             });
 
             const closeSocket = (reason) => {
@@ -815,6 +974,11 @@
                 if (uploadedVideoPath) {
                     payload.input_video = uploadedVideoPath;
                     payload.strength = Number(denoisingStrengthInput.value);
+                }
+
+                // Include uploaded start frame path if available
+                if (uploadedStartFramePath) {
+                    payload.start_frame = uploadedStartFramePath;
                 }
 
                 const rawSeed = seedInput.value.trim();
