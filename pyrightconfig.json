@@ -1,0 +1,27 @@
+{
+    "typeCheckingMode": "off",
+    "exclude": [
+      "**/node_modules",
+      "**/__pycache__",
+      "src/experimental",
+      "src/typestubs",
+      ".venv",
+      "datasets",
+      "debug_samples*",
+      "flash-attention",
+      "precomputed*",
+      "wandb",
+      "configs",
+      ".vscode",
+      ".claude",
+      "*test_data*",
+      "outputs",
+      "images",
+      "logs",
+      "checkpoints",
+      "videos",
+      "*mp4",
+      "wandb"
+      
+    ]
+}

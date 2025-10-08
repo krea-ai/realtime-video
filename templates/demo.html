@@ -1,0 +1,1611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Self Forcing</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .main-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+        .left-column {
+            padding-right: 15px;
+        }
+        .right-column {
+            padding-left: 15px;
+        }
+        @media (max-width: 768px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            .left-column, .right-column {
+                padding: 0;
+            }
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, button, select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        textarea {
+            width: 100%;
+            height: 90px;
+            resize: vertical;
+        }
+        input[type="range"] {
+            width: 200px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .stop-btn {
+            background-color: #dc3545;
+        }
+        .stop-btn:hover {
+            background-color: #c82333;
+        }
+        .video-container {
+            text-align: center;
+            background: #000;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #videoFrame {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .progress-container {
+            margin: 20px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .frame-info {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+        .buffer-info {
+            background-color: #e3f2fd;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+            color: #1976d2;
+        }
+        .playback-controls {
+            margin: 15px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        .playback-controls button {
+            margin: 0 5px;
+            padding: 8px 15px;
+        }
+        #playbackSpeed {
+            width: 80px;
+        }
+        .torch-compile-toggle {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 10px;
+            margin: 0;
+            flex: 1;
+            min-width: 120px;
+        }
+        .torch-compile-toggle label {
+            display: flex;
+            align-items: center;
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 0;
+            font-size: 0.9em;
+        }
+        .torch-compile-toggle input[type="checkbox"] {
+            transform: scale(1.1);
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Self Forcing</h1>
+
+        <div class="main-layout">
+            <div class="left-column">
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="prompt">Prompt (long, detailed prompts work better):</label>
+                        <textarea id="prompt" placeholder="Describe the video you want to generate..."></textarea>
+                        <label for="prompt2">Prompt 2 (long, detailed prompts work better):</label>
+                        <textarea id="prompt2" placeholder="Describe the video you want to generate..."></textarea>
+                        
+                        <div style="margin-top: 15px; padding: 15px; background-color: #f0f8ff; border-radius: 6px; border: 1px solid #b0d4ff;">
+                            <label for="dynamicPrompt" style="color: #0066cc;">🔄 Dynamic Controls (adjust during generation):</label>
+                            
+                            <div style="margin-top: 10px;">
+                                <label for="dynamicPrompt">Dynamic Prompt:</label>
+                                <textarea id="dynamicPrompt" placeholder="Enter new prompt to interpolate to during generation..." style="background-color: #ffffff; border: 1px solid #0066cc;"></textarea>
+                            </div>
+                            
+                            <div style="margin-top: 10px;">
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" id="dynamicPromptExpand" checked onchange="updateGenerationParams()">
+                                    <span>🤖 Auto-expand dynamic prompts</span>
+                                </label>
+                            </div>
+                            
+                            <div style="display: flex; gap: 20px; margin-top: 10px; flex-wrap: wrap;">
+                                <div class="control-group" style="margin-bottom: 0; min-width: 200px;">
+                                    <label for="dynamic-interp-blocks">Dynamic Interp Blocks: <span id="dynamic-interp-blocks-value">6</span></label>
+                                    <input type="range" id="dynamic-interp-blocks" min="2" max="22" value="6" step="1">
+                                </div>
+                                <button type="button" onclick="updateDynamicPrompt()" style="background-color: #0066cc; padding: 8px 20px;">
+                                    🔄 Update Prompt
+                                </button>
+                            </div>
+                            
+                            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #b0d4ff;">
+                                <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                                    <div class="control-group" style="margin-bottom: 0; min-width: 200px;">
+                                        <label for="dynamic-context-noise">Dynamic Context Noise: <span id="dynamic-context-noise-value">0</span></label>
+                                        <input type="range" id="dynamic-context-noise" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0; min-width: 200px;">
+                                        <label for="dynamic-kv-cache-scale">Dynamic KV Cache Scale: <span id="dynamic-kv-cache-scale-value">1</span></label>
+                                        <input type="range" id="dynamic-kv-cache-scale" min="0.1" max="1" value="1" step="0.1">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0; min-width: 200px;">
+                                        <label for="dynamic-var-kv-thresh">Var KV Thresh: <span id="dynamic-var-kv-thresh-value">1.2</span></label>
+                                        <input type="range" id="dynamic-var-kv-thresh" min="0.5" max="2" value="1.2" step="0.05">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0; min-width: 200px;">
+                                        <label for="dynamic-thresh-kv-scale">Thresh KV Scale: <span id="dynamic-thresh-kv-scale-value">0.3</span></label>
+                                        <input type="range" id="dynamic-thresh-kv-scale" min="0.01" max="1" value="0.3" step="0.01">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0; min-width: 200px;">
+                                        <label>Dynamic KV Cache Frames: <span id="dynamic-kv-cache-num-frames-value">21</span></label>
+                                        <div style="display: flex; gap: 15px; margin-top: 5px;">
+                                            <label style="font-weight: normal; cursor: pointer;">
+                                                <input type="radio" name="dynamic-kv-cache-radio" value="1" style="margin-right: 3px;">1
+                                            </label>
+                                            <label style="font-weight: normal; cursor: pointer;">
+                                                <input type="radio" name="dynamic-kv-cache-radio" value="3" style="margin-right: 3px;">3
+                                            </label>
+                                            <label style="font-weight: normal; cursor: pointer;">
+                                                <input type="radio" name="dynamic-kv-cache-radio" value="6" style="margin-right: 3px;">6
+                                            </label>
+                                            <label style="font-weight: normal; cursor: pointer;">
+                                                <input type="radio" name="dynamic-kv-cache-radio" value="9" style="margin-right: 3px;">9
+                                            </label>
+                                            <label style="font-weight: normal; cursor: pointer;">
+                                                <input type="radio" name="dynamic-kv-cache-radio" value="21" checked style="margin-right: 3px;">21
+                                            </label>
+                                        </div>
+                                        <input type="range" id="dynamic-kv-cache-num-frames" min="0" max="21" value="21" step="1" style="margin-top: 8px;">
+                                    </div>
+                                </div>
+                                
+                                <div style="margin-top: 15px; padding: 10px; background-color: #fff8e1; border-radius: 4px; border: 1px solid #ffe082;">
+                                    <details>
+                                        <summary style="font-weight: bold; color: #f57c00; cursor: pointer; user-select: none;">🔢 Dynamic KV Cache Sequence ▼</summary>
+                                    <div style="margin-top: 10px;">
+                                        <label for="dynamic-kv-sequence-text">Custom Sequence (Python list format):</label>
+                                        <input type="text" id="dynamic-kv-sequence-text" placeholder="e.g. [9, 6, 3, 1, 3, 6, 9]" style="width: 100%; padding: 8px; margin-top: 5px;">
+                                        <button type="button" onclick="updateKVCacheSequence()" style="background-color: #ff9800; margin-top: 8px; padding: 8px 20px;">
+                                            ➕ Add Sequence
+                                        </button>
+                                    </div>
+                                    
+                                    <div style="margin-top: 15px;">
+                                        <label>Preset Sequences:</label>
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 8px;">
+                                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[]" style="margin-right: 8px;">
+                                                    Empty: []
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[3]" style="margin-right: 8px;">
+                                                    [3]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[6]" style="margin-right: 8px;">
+                                                    [6]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[6, 3]" style="margin-right: 8px;">
+                                                    [6, 3]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[6, 3, 1, 3, 6]" style="margin-right: 8px;">
+                                                    [6, 3, 1, 3, 6]
+                                                </label>
+                                            </div>
+                                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[6, 3, 1, 3, 6]" style="margin-right: 8px;">
+                                                    [6, 3, 1, 3, 6]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[1]" style="margin-right: 8px;">
+                                                    [1]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[3, 1, 6]" style="margin-right: 8px;">
+                                                    [3, 1, 6]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-sequence-preset" value="[6, 3, 1]" style="margin-right: 8px;">
+                                                    [6, 3, 1]
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <button type="button" onclick="applyPresetSequence()" style="background-color: #ff9800; margin-top: 8px; padding: 8px 20px;">
+                                            ✅ Apply Preset
+                                        </button>
+                                    </div>
+                                    
+                                    <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
+                                        ℹ️ Sequences are added to the queue and consumed one value per block
+                                    </div>
+                                    </details>
+                                </div>
+                                
+                                <div style="margin-top: 15px; padding: 10px; background-color: #e8f5e9; border-radius: 4px; border: 1px solid #66bb6a;">
+                                    <details>
+                                        <summary style="font-weight: bold; color: #2e7d32; cursor: pointer; user-select: none;">📊 Dynamic KV Cache Scale Sequence ▼</summary>
+                                    <div style="margin-top: 10px;">
+                                        <label for="dynamic-kv-scale-sequence-text">Custom Scale Sequence (Python list format):</label>
+                                        <input type="text" id="dynamic-kv-scale-sequence-text" placeholder="e.g. [1.0, 0.8, 0.5, 0.3, 0.5, 0.8, 1.0]" style="width: 100%; padding: 8px; margin-top: 5px;">
+                                        <button type="button" onclick="updateKVCacheScaleSequence()" style="background-color: #4caf50; margin-top: 8px; padding: 8px 20px;">
+                                            ➕ Add Scale Sequence
+                                        </button>
+                                    </div>
+                                    
+                                    <div style="margin-top: 15px;">
+                                        <label>Preset Scale Sequences:</label>
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 8px;">
+                                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[]" style="margin-right: 8px;">
+                                                    Empty: []
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.5]" style="margin-right: 8px;">
+                                                    [0.5]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.4, 0.3, 0.3, 0.3, 0.3,]" style="margin-right: 8px;">
+                                                    [0.4, 0.3, 0.3, 0.3, 0.3,]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.4, 0.4, 0.4, 0.4, 0.4,]" style="margin-right: 8px;">
+                                                    [0.4, 0.4, 0.4, 0.4, 0.4,]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.5, 0.3, 0.2, 0.2, 0.2]" style="margin-right: 8px;">
+                                                    [0.5, 0.3, 0.2, 0.2, 0.2]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.5, 0.3, 0.2, 0.2]" style="margin-right: 8px;">
+                                                    [0.5, 0.3, 0.2, 0.2]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.8, 0.5, 0.3, 0.2, 0.2, 0.2, 0.5, 0.8]" style="margin-right: 8px;">
+                                                    [0.8, 0.5, 0.3, 0.2, 0.2, 0.2, 0.5, 0.8]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.5, 0.3, 0.2, 0.2, 0.2, 0.5, 0.8]" style="margin-right: 8px;">
+                                                    [0.5, 0.3, 0.2, 0.2, 0.2, 0.5, 0.8]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.5, 0.3, 0.2, 0.15, 0.15, 0.3, 0.5, 0.8, 0.8]" style="margin-right: 8px;">
+                                                    [0.5, 0.3, 0.3, 0.25, 0.25, 0.3, 0.3, 0.5, 0.8]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.5, 0.3, 0.2, 0.15, 0.15, 0.3, 0.5, 0.8, 0.8]" style="margin-right: 8px;">
+                                                    [0.5, 0.3, 0.2, 0.15, 0.15, 0.3, 0.5, 0.8, 0.8]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[1.0, 0.8, 0.5, 0.8, 1.0]" style="margin-right: 8px;">
+                                                    [1.0, 0.8, 0.5, 0.8, 1.0]
+                                                </label>
+                                            </div>
+                                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.5, 0.3, 0.1, 0.3, 0.5]" style="margin-right: 8px;">
+                                                    [0.5, 0.3, 0.1, 0.3, 0.5]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.1]" style="margin-right: 8px;">
+                                                    [0.1]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[0.3, 0.1, 0.6]" style="margin-right: 8px;">
+                                                    [0.3, 0.1, 0.6]
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="kv-scale-sequence-preset" value="[1.0, 0.5, 0.1]" style="margin-right: 8px;">
+                                                    [1.0, 0.5, 0.1]
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <button type="button" onclick="applyScalePresetSequence()" style="background-color: #4caf50; margin-top: 8px; padding: 8px 20px;">
+                                            ✅ Apply Preset
+                                        </button>
+                                    </div>
+                                    
+                                    <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
+                                        ℹ️ Scale sequences are added to the queue and consumed one value per block
+                                    </div>
+                                    </details>
+                                </div>
+                                
+                                <div style="margin-top: 15px; padding: 10px; background-color: #fff3e0; border-radius: 4px; border: 1px solid #ffb74d;">
+                                    <details>
+                                        <summary style="font-weight: bold; color: #e65100; cursor: pointer; user-select: none;">〰️ Sinusoidal KV Cache Schedule ▼</summary>
+                                    <div style="margin-top: 10px;">
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                            <div class="control-group" style="margin-bottom: 0;">
+                                                <label for="sin-min-value">Min Value: <span id="sin-min-value-display">0.3</span></label>
+                                                <input type="range" id="sin-min-value" min="0.1" max="1.0" value="0.3" step="0.1" style="width: 100%;">
+                                            </div>
+                                            <div class="control-group" style="margin-bottom: 0;">
+                                                <label for="sin-max-value">Max Value: <span id="sin-max-value-display">0.7</span></label>
+                                                <input type="range" id="sin-max-value" min="0.1" max="1.0" value="0.7" step="0.1" style="width: 100%;">
+                                            </div>
+                                            <div class="control-group" style="margin-bottom: 0;">
+                                                <label for="sin-frequency">Frequency: <span id="sin-frequency-display">10.0</span></label>
+                                                <input type="range" id="sin-frequency" min="0.5" max="40.0" value="10.0" step="0.1" style="width: 100%;">
+                                            </div>
+                                        </div>
+                                        
+                                        <button type="button" onclick="generateSinusoidalSchedule()" style="background-color: #ff6f00; padding: 8px 20px; color: white; width: 100%;">
+                                            〰️ Generate Sinusoidal Schedule
+                                        </button>
+                                        
+                                        <div id="sinusoidal-plot-container" style="margin-top: 15px; display: none;">
+                                            <img id="sinusoidal-plot" src="" style="width: 100%; border-radius: 4px; border: 1px solid #ddd;">
+                                        </div>
+                                        
+                                        <div id="sinusoidal-schedule-display" style="margin-top: 10px; display: none; padding: 10px; background-color: white; border-radius: 4px; border: 1px solid #ddd; max-height: 100px; overflow-y: auto; font-family: monospace; font-size: 0.85em;">
+                                        </div>
+                                        
+                                        <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
+                                            ℹ️ Generates a sinusoidal pattern for KV cache scale values, quantized to 0.1 intervals
+                                        </div>
+                                    </div>
+                                    </details>
+                                </div>
+                                
+                                <div style="margin-top: 15px; padding: 10px; background-color: #f3e5f5; border-radius: 4px; border: 1px solid #ba68c8;">
+                                    <details>
+                                        <summary style="font-weight: bold; color: #6a1b9a; cursor: pointer; user-select: none;">⏱️ Dynamic Timestep to Apply KV Cache Scale ▼</summary>
+                                    <div style="margin-top: 10px;">
+                                        <label for="dynamic-timestep-kv-scale-text">Custom Timestep List (Python list format):</label>
+                                        <input type="text" id="dynamic-timestep-kv-scale-text" placeholder="e.g. [0, 1, 2] or [0, 2, 4, 6]" style="width: 100%; padding: 8px; margin-top: 5px;">
+                                        <button type="button" onclick="updateTimestepKVCacheScale()" style="background-color: #9c27b0; margin-top: 8px; padding: 8px 20px; color: white;">
+                                            ➕ Set Timesteps
+                                        </button>
+                                    </div>
+                                    
+                                    <div style="margin-top: 15px;">
+                                        <label>Preset Timestep Lists:</label>
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 8px;">
+                                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="timestep-kv-scale-preset" value="[0]" style="margin-right: 8px;">
+                                                    [0] - First timestep only
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="timestep-kv-scale-preset" value="[0, 1]" style="margin-right: 8px;">
+                                                    [0, 1] - First two timesteps
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="timestep-kv-scale-preset" value="[0, 1, 2]" style="margin-right: 8px;">
+                                                    [0, 1, 2] - First three timesteps
+                                                </label>
+                                            </div>
+                                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="timestep-kv-scale-preset" value="[1, 2]" style="margin-right: 8px;">
+                                                    [1, 2] - Second and third
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="timestep-kv-scale-preset" value="[1, 2, 3]" style="margin-right: 8px;">
+                                                    [1, 2, 3] - last three 
+                                                </label>
+                                                <label style="font-weight: normal; cursor: pointer; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <input type="radio" name="timestep-kv-scale-preset" value="[0, 1, 2, 3]" style="margin-right: 8px;">
+                                                    [0, 1, 2, 3] - First four
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <button type="button" onclick="applyTimestepPreset()" style="background-color: #9c27b0; margin-top: 8px; padding: 8px 20px; color: white;">
+                                            ✅ Apply Preset
+                                        </button>
+                                    </div>
+                                    
+                                    <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
+                                        ℹ️ Specifies which timesteps within each block should apply the KV cache scale
+                                    </div>
+                                    </details>
+                                </div>
+                                
+                                <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
+                                    ℹ️ These parameters update automatically when sliders are moved during generation
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 10px;">
+                            <label>Quick Prompts:</label>
+                            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 5px;">
+                                <button type="button" onclick="setQuickPrompt('quick-demo-1')" style="background-color: #28a745; font-size: 11px; padding: 8px; width: 100%; text-align: left; white-space: pre-wrap; line-height: 1.3; min-height: 60px; border-radius: 4px; color: white; border: none; cursor: pointer;">A stylish woman walks down a Tokyo street filled with warm glowing neon and animated city signage. She wears a black leather jacket, a long red dress, and black boots, and carries a black purse. She wears sunglasses and red lipstick. She walks confidently and casually. The street is damp and reflective, creating a mirror effect of the colorful lights. Many pedestrians walk about.</button>
+                                <button type="button" onclick="setQuickPrompt('quick-demo-2')" style="background-color: #17a2b8; font-size: 11px; padding: 8px; width: 100%; text-align: left; white-space: pre-wrap; line-height: 1.3; min-height: 60px; border-radius: 4px; color: white; border: none; cursor: pointer;">A white and orange tabby cat is seen happily darting through a dense garden, as if chasing something. Its eyes are wide and happy as it jogs forward, scanning the branches, flowers, and leaves as it walks. The path is narrow as it makes its way between all the plants. the scene is captured from a ground-level angle, following the cat closely, giving a low and intimate perspective. The image is cinematic with warm tones and a grainy texture. The scattered daylight between the leaves and plants above creates a warm contrast, accentuating the cat’s orange fur. The shot is clear and sharp, with a shallow depth of field.</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 20px;">
+                        <div class="control-group">
+                            <label for="seed">Seed:</label>
+                            <input type="number" id="seed" value="-1" min="0" max="999999">
+                        </div>
+
+                        <div class="control-group">
+                            <label for="fps">Target FPS: <span id="fpsValue">8.5</span></label>
+                            <input type="range" id="fps" min="2" max="16" value="8.5" step="0.5">
+                        </div>
+                        <div class="control-group">
+                            <label for="num-blocks">num_blocks: <span id="num-blocks-value">6</span></label>
+                            <input type="range" id="num-blocks" min="4" max="240" value="6" step="1">
+                        </div>
+
+                        <!-- <div class="control-group">
+                            <label for="blocks">Total Blocks: <span id="blocksValue">7</span></label>
+                            <input type="range" id="blocks" min="3" max="10" value="7" step="1">
+                        </div> -->
+                    </div>
+                    <div style="display: flex; gap: 20px;">
+                        <div class="control-group">
+                            <label for="interp-blocks">Interpblocks: <span id="interp-blocks-value">6</span></label>
+                            <input type="range" id="interp-blocks" min="2" max="22" value="6" step="1">
+                        </div>
+                        <div class="control-group">
+                            <label for="context-noise">context_noise: <span id="context-noise-value">0</span></label>
+                            <input type="range" id="context-noise" min="0" max="1" value="0" step="0.01">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 20px;">
+                        <div class="control-group">
+                            <label for="kv-cache-scale">kv_cache_scale: <span id="kv-cache-scale-value">1</span></label>
+                            <input type="range" id="kv-cache-scale" min="0.1" max="1" value="1" step="0.1">
+                        </div>
+                        <div class="control-group">
+                            <label for="kv-cache-num-frames">kv cache nframes: <span id="kv-cache-num-frames-value">9</span></label>
+                            <input type="range" id="kv-cache-num-frames" min="0" max="42" value="9" step="1">
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label for="kv-cache-num-frames-sequence">Initial KV Cache Sequence (Python list format):</label>
+                        <input type="text" id="kv-cache-num-frames-sequence" placeholder="e.g. [21, 15, 9, 6, 3] or leave empty" style="width: 100%; padding: 8px;">
+                        <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
+                            ℹ️ Optional: Specify a sequence of kv_cache_num_frames values to use for each block
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label for="kv-cache-num-scale-sequence">Initial KV Cache Scale Sequence (Python list format):</label>
+                        <input type="text" id="kv-cache-num-scale-sequence" placeholder="e.g. [1.0, 0.8, 0.6, 0.4, 0.2] or leave empty" style="width: 100%; padding: 8px;">
+                        <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
+                            ℹ️ Optional: Specify a sequence of kv_cache_scale values to use for each block
+                        </div>
+                    </div>
+                    <div class="control-group" style="border: 1px solid #9c27b0; padding: 15px; border-radius: 6px; background-color: #f3e5f5;">
+                        <details>
+                            <summary style="font-weight: bold; color: #6a1b9a; cursor: pointer; user-select: none;">⏱️ Timesteps to Apply KV Cache Scale ▼</summary>
+                            <div style="margin-top: 15px;">
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 10px 0;">
+                                    <label style="display: flex; align-items: center; padding: 8px; background-color: white; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;">
+                                        <input type="radio" name="timestep-preset" value="[0]" style="margin-right: 8px;">
+                                        <span>[0] - First only</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; padding: 8px; background-color: white; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;">
+                                        <input type="radio" name="timestep-preset" value="[0, 1]" checked style="margin-right: 8px;">
+                                        <span>[0, 1] - First two</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; padding: 8px; background-color: white; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;">
+                                        <input type="radio" name="timestep-preset" value="[0, 1, 2]" style="margin-right: 8px;">
+                                        <span>[0, 1, 2] - First three</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; padding: 8px; background-color: white; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;">
+                                        <input type="radio" name="timestep-preset" value="[1, 2]" style="margin-right: 8px;">
+                                        <span>[1, 2] - Second & third</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; padding: 8px; background-color: white; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;">
+                                        <input type="radio" name="timestep-preset" value="[1, 2, 3]" style="margin-right: 8px;">
+                                        <span>[1, 2, 3] - Last three</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; padding: 8px; background-color: white; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;">
+                                        <input type="radio" name="timestep-preset" value="[0, 1, 2, 3]" style="margin-right: 8px;">
+                                        <span>[0, 1, 2, 3] - All four</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; padding: 8px; background-color: white; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;">
+                                        <input type="radio" name="timestep-preset" value="custom" style="margin-right: 8px;">
+                                        <span>Custom</span>
+                                    </label>
+                                </div>
+                                <input type="text" id="timestep-to-apply-kv-cache-scale" placeholder="e.g. [0, 2, 4] - for custom values" style="width: 100%; padding: 8px; display: none; margin-top: 10px;">
+                                <div style="font-size: 0.85em; color: #666; margin-top: 10px;">
+                                    ℹ️ Specify which timesteps within each block should apply the KV cache scale
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                    <div class="control-group" style="border: 1px solid #ffb74d; padding: 15px; border-radius: 6px; background-color: #fff8f0;">
+                        <label style="display: flex; align-items: center; margin-bottom: 10px;">
+                            <input type="checkbox" id="sinusoidal-kv-enabled" style="margin-right: 8px;" checked>
+                            <span style="font-weight: bold; color: #e65100;">〰️ Enable Sinusoidal KV Cache Schedule</span>
+                        </label>
+                        <div id="sinusoidal-params-group" style="display: none;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                                <div>
+                                    <label for="sinusoidal-min-value">Min Value: <span id="sinusoidal-min-value-display">0.3</span></label>
+                                    <input type="range" id="sinusoidal-min-value" min="0.1" max="1.0" value="0.25" step="0.1" style="width: 100%;">
+                                </div>
+                                <div>
+                                    <label for="sinusoidal-max-value">Max Value: <span id="sinusoidal-max-value-display">0.7</span></label>
+                                    <input type="range" id="sinusoidal-max-value" min="0.1" max="1.0" value="0.7" step="0.1" style="width: 100%;">
+                                </div>
+                                <div>
+                                    <label for="sinusoidal-frequency">Frequency: <span id="sinusoidal-frequency-display">10.0</span></label>
+                                    <input type="range" id="sinusoidal-frequency" min="0.5" max="50.0" value="10.0" step="0.5" style="width: 100%;">
+                                </div>
+                            </div>
+                            <div style="font-size: 0.85em; color: #666; margin-top: 10px;">
+                                ℹ️ Generates a sinusoidal pattern for KV cache scale values, quantized to 0.1 intervals
+                            </div>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <div style="display: flex; gap: 15px; align-items: flex-start; flex-wrap: wrap;">
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="torchCompile">
+                                    🔥 torch.compile
+                                </label>
+                            </div>
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="fp8Toggle">
+                                    ⚡ FP8 Quantization
+                                </label>
+                            </div>
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="taehvToggle">
+                                    ⚡ TAEHV VAE
+                                </label>
+                            </div>
+                        </div>
+                        <!-- <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
+                            <strong>Note:</strong> torch.compile and FP8 are one-time toggles (cannot be changed once applied)
+                        </div> -->
+                    </div>
+
+                    <div class="control-group">
+                        <div style="display: flex; gap: 15px; align-items: flex-start; flex-wrap: wrap;">
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="keepFirstToggle" checked>
+                                    keep first frame
+                                </label>
+                            </div>
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="kvScaleAllowFirstToggle" checked>
+                                    kv_scale_allow_first
+                                </label>
+                            </div>
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="promptExpandToggle" checked>
+                                    🤖 Auto-expand prompts
+                                </label>
+                            </div>
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="useKvKeyScaleToggle">
+                                    use_kv_key_scale
+                                </label>
+                            </div>
+                            <div class="torch-compile-toggle">
+                                <label>
+                                    <input type="checkbox" id="doKvRecompToggle" checked>
+                                    do_kv_recomp
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="numFramesPerBlock">num_frames_per_block: <span id="numFramesPerBlockValue">3</span></label>
+                        <input type="range" id="numFramesPerBlock" min="1" max="10" value="3" step="1">
+                    </div>
+
+                    <div class="control-group">
+                        <label for="checkpointPath">Checkpoint path:</label>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+                            <input type="text" id="checkpointPath" placeholder="/path/to/checkpoints/self_forcing_dmd.pt" style="flex:1; min-width: 260px;">
+                            <button type="button" onclick="swapCheckpoint()">Swap checkpoint</button>
+                        </div>
+                    </div>
+
+                    <div class="control-group">
+                        <button id="startBtn" onclick="startGeneration()">🚀 Start Generation</button>
+                        <button id="stopBtn" onclick="stopGeneration()" disabled class="stop-btn">⏹️ Stop</button>
+                    </div>
+                </div>
+
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div id="progressText">Ready to generate</div>
+                </div>
+            </div>
+
+            <div class="right-column">
+                <div class="buffer-info">
+                    <strong>📦 Frame Buffer:</strong> <span id="bufferCount">0</span> frames ready |
+                    <strong>📺 Displayed:</strong> <span id="displayedCount">0</span> frames
+                    <!-- <strong>⚡ Receive Rate:</strong> <span id="receiveRate">0</span> fps -->
+                </div>
+
+                <div class="playback-controls">
+                    <button id="playBtn" onclick="togglePlayback()" disabled>▶️ Play</button>
+                    <button id="resetBtn" onclick="resetPlayback()" disabled>⏮️ Reset</button>
+                    <label for="playbackSpeed">Speed:</label>
+                    <select id="playbackSpeed" onchange="updatePlaybackSpeed()">
+                        <option value="0.25">0.25x</option>
+                        <option value="0.5">0.5x</option>
+                        <option value="0.75">0.75x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="1.25">1.25x</option>
+                        <option value="1.5">1.5x</option>
+                        <option value="2">2x</option>
+                    </select>
+                    <button type="button" onclick="downloadLastVideo()">⬇️ Download last video</button>
+                </div>
+
+                <div id="statusContainer"></div>
+
+                <div class="video-container">
+                    <img id="videoFrame" src="" alt="Video frames will appear here" style="display: none;">
+                    <div id="placeholderText">Click "Start Generation" to begin</div>
+                    <div id="frameInfo" class="frame-info"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let frameBuffer = [];  // Store all received frames
+        let currentFrameIndex = 0;
+        let isPlaying = false;
+        let playbackInterval = null;
+        let targetFps = 9;
+        let playbackSpeed = 1.0;
+        let startTime = null;
+        let lastReceiveTime = null;
+        let receiveCount = 0;
+        let receiveRate = 0;
+        let generation_active = false;  // Track if generation is active
+
+        // State tracking for one-time toggles
+        let torchCompileApplied = false;
+        let fp8Applied = false;
+
+        // Update slider values
+        document.getElementById('fps').oninput = function() {
+            targetFps = parseFloat(this.value);
+            document.getElementById('fpsValue').textContent = this.value;
+            updatePlaybackTiming();
+        };
+
+        document.getElementById('num-blocks').oninput = function() {
+            document.getElementById('num-blocks-value').textContent = this.value;
+        };
+        document.getElementById('interp-blocks').oninput = function() {
+            document.getElementById('interp-blocks-value').textContent = this.value;
+        };
+        document.getElementById('context-noise').oninput = function() {
+            document.getElementById('context-noise-value').textContent = this.value;
+        };
+        document.getElementById('kv-cache-scale').oninput = function() {
+            document.getElementById('kv-cache-scale-value').textContent = this.value;
+        };
+        
+        // Add event listener for use_kv_key_scale toggle
+        document.getElementById('useKvKeyScaleToggle').onchange = function() {
+            const kvCacheScaleSlider = document.getElementById('kv-cache-scale');
+            const dynamicKvCacheScaleSlider = document.getElementById('dynamic-kv-cache-scale');
+            
+            if (this.checked) {
+                // When checked, change range to 0.8-1.0 with step 0.01
+                kvCacheScaleSlider.min = '0.8';
+                kvCacheScaleSlider.max = '1.0';
+                kvCacheScaleSlider.step = '0.01';
+                kvCacheScaleSlider.value = Math.max(0.8, Math.min(1.0, parseFloat(kvCacheScaleSlider.value)));
+                
+                dynamicKvCacheScaleSlider.min = '0.8';
+                dynamicKvCacheScaleSlider.max = '1.0';
+                dynamicKvCacheScaleSlider.step = '0.01';
+                dynamicKvCacheScaleSlider.value = Math.max(0.8, Math.min(1.0, parseFloat(dynamicKvCacheScaleSlider.value)));
+            } else {
+                // When unchecked, restore original range 0.1-1.0 with step 0.1
+                kvCacheScaleSlider.min = '0.1';
+                kvCacheScaleSlider.max = '1.0';
+                kvCacheScaleSlider.step = '0.1';
+                
+                dynamicKvCacheScaleSlider.min = '0.1';
+                dynamicKvCacheScaleSlider.max = '1.0';
+                dynamicKvCacheScaleSlider.step = '0.1';
+            }
+            
+            // Update displayed values
+            document.getElementById('kv-cache-scale-value').textContent = kvCacheScaleSlider.value;
+            document.getElementById('dynamic-kv-cache-scale-value').textContent = dynamicKvCacheScaleSlider.value;
+        };
+        document.getElementById('kv-cache-num-frames').oninput = function() {
+            document.getElementById('kv-cache-num-frames-value').textContent = this.value;
+        };
+        
+        document.getElementById('numFramesPerBlock').oninput = function() {
+            document.getElementById('numFramesPerBlockValue').textContent = this.value;
+        };
+        
+        document.getElementById('dynamic-interp-blocks').oninput = function() {
+            document.getElementById('dynamic-interp-blocks-value').textContent = this.value;
+        };
+        
+        document.getElementById('dynamic-context-noise').oninput = function() {
+            document.getElementById('dynamic-context-noise-value').textContent = this.value;
+            // Immediately update the parameter when slider changes
+            updateGenerationParams();
+        };
+        
+        document.getElementById('dynamic-kv-cache-scale').oninput = function() {
+            document.getElementById('dynamic-kv-cache-scale-value').textContent = this.value;
+            // Immediately update the parameter when slider changes
+            updateGenerationParams();
+        };
+        
+        document.getElementById('dynamic-var-kv-thresh').oninput = function() {
+            document.getElementById('dynamic-var-kv-thresh-value').textContent = this.value;
+            // Immediately update the parameter when slider changes
+            updateGenerationParams();
+        };
+        
+        document.getElementById('dynamic-thresh-kv-scale').oninput = function() {
+            document.getElementById('dynamic-thresh-kv-scale-value').textContent = this.value;
+            // Immediately update the parameter when slider changes
+            updateGenerationParams();
+        };
+        
+        document.getElementById('dynamic-kv-cache-num-frames').oninput = function() {
+            const value = this.value;
+            document.getElementById('dynamic-kv-cache-num-frames-value').textContent = value;
+            
+            // Update radio button if it matches a preset value
+            const radios = document.getElementsByName('dynamic-kv-cache-radio');
+            let matched = false;
+            for (let radio of radios) {
+                if (radio.value === value) {
+                    radio.checked = true;
+                    matched = true;
+                    break;
+                }
+            }
+            // Uncheck all radios if no match
+            if (!matched) {
+                for (let radio of radios) {
+                    radio.checked = false;
+                }
+            }
+            
+            // Immediately update the parameter when slider changes
+            updateGenerationParams();
+        };
+        
+        // Add event listeners for radio buttons
+        document.getElementsByName('dynamic-kv-cache-radio').forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.checked) {
+                    const value = this.value;
+                    document.getElementById('dynamic-kv-cache-num-frames').value = value;
+                    document.getElementById('dynamic-kv-cache-num-frames-value').textContent = value;
+                    updateGenerationParams();
+                }
+            });
+        });
+        
+        // Add event listeners for sinusoidal schedule sliders
+        document.getElementById('sin-min-value').oninput = function() {
+            document.getElementById('sin-min-value-display').textContent = this.value;
+        };
+        
+        document.getElementById('sin-max-value').oninput = function() {
+            document.getElementById('sin-max-value-display').textContent = this.value;
+        };
+        
+        document.getElementById('sin-frequency').oninput = function() {
+            document.getElementById('sin-frequency-display').textContent = this.value;
+        };
+        
+        // Add event listeners for new sinusoidal UI controls
+        document.getElementById('sinusoidal-kv-enabled').onchange = function() {
+            document.getElementById('sinusoidal-params-group').style.display = this.checked ? 'block' : 'none';
+        };
+        
+        document.getElementById('sinusoidal-min-value').oninput = function() {
+            document.getElementById('sinusoidal-min-value-display').textContent = this.value;
+        };
+        
+        document.getElementById('sinusoidal-max-value').oninput = function() {
+            document.getElementById('sinusoidal-max-value-display').textContent = this.value;
+        };
+        
+        document.getElementById('sinusoidal-frequency').oninput = function() {
+            document.getElementById('sinusoidal-frequency-display').textContent = this.value;
+        };
+        
+        // Add event listeners for timestep preset radio buttons
+        document.getElementsByName('timestep-preset').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const customInput = document.getElementById('timestep-to-apply-kv-cache-scale');
+                if (this.value === 'custom') {
+                    customInput.style.display = 'block';
+                } else {
+                    customInput.style.display = 'none';
+                }
+            });
+        });
+
+
+        // Handle toggle behavior and fetch current status
+        function updateToggleStates() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    torchCompileApplied = data.torch_compile_applied;
+                    fp8Applied = data.fp8_applied;
+
+                    // Update UI based on current state
+                    const torchToggle = document.getElementById('torchCompile');
+                    const fp8Toggle = document.getElementById('fp8Toggle');
+                    const taehvToggle = document.getElementById('taehvToggle');
+
+                    // Disable one-time toggles if already applied
+                    if (torchCompileApplied) {
+                        torchToggle.checked = true;
+                        torchToggle.disabled = true;
+                        torchToggle.parentElement.style.opacity = '0.6';
+                    }
+
+                    if (fp8Applied) {
+                        fp8Toggle.checked = true;
+                        fp8Toggle.disabled = true;
+                        fp8Toggle.parentElement.style.opacity = '0.6';
+                    }
+
+                    // Set TAEHV toggle based on current state
+                    taehvToggle.checked = data.current_use_taehv;
+                })
+                .catch(err => console.log('Status check failed:', err));
+        }
+
+        // Handle torch.compile toggle
+        document.getElementById('torchCompile').onchange = function() {
+            if (torchCompileApplied && !this.checked) {
+                this.checked = true; // Prevent unchecking
+                alert('torch.compile cannot be disabled once applied');
+            }
+        };
+
+        // Handle FP8 toggle
+        document.getElementById('fp8Toggle').onchange = function() {
+            if (fp8Applied && !this.checked) {
+                this.checked = true; // Prevent unchecking
+                alert('FP8 quantization cannot be disabled once applied');
+            }
+        };
+
+        // Update toggle states on page load
+        updateToggleStates();
+
+        // Socket event handlers
+        socket.on('connect', function() {
+            // showStatus('Connected to frontend-buffered server', 'info');
+        });
+
+        socket.on('status', function(data) {
+            // showStatus(data.message, 'info');
+        });
+
+        socket.on('progress', function(data) {
+            updateProgress(data.progress, data.message);
+        });
+
+        socket.on('frame_ready', function(data) {
+            // Add frame to buffer immediately
+            frameBuffer.push(data);
+            receiveCount++;
+
+            // Calculate receive rate
+            const now = Date.now();
+            if (lastReceiveTime) {
+                const interval = (now - lastReceiveTime) / 1000;
+                receiveRate = (1 / interval).toFixed(1);
+            }
+            lastReceiveTime = now;
+
+            updateBufferInfo();
+
+            // Auto-start playback when we have some frames
+            if (frameBuffer.length === 5 && !isPlaying) {
+                // showStatus('Auto-starting playback with buffer of 5 frames', 'info');
+                startPlayback();
+            }
+        });
+
+        socket.on('generation_complete', function(data) {
+            // showStatus(data.message + ` (Generated in ${data.generation_time})`, 'success');
+            enableControls(true);
+            const duration = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : 'unknown';
+            updateFrameInfo(`Generation complete! ${data.total_frames} frames in ${duration}s`);
+
+            // Update toggle states after generation
+            updateToggleStates();
+        });
+
+        socket.on('error', function(data) {
+            // showStatus(`Error: ${data.message}`, 'error');
+            enableControls(true);
+        });
+        
+        socket.on('dynamic_prompt_updated', function(data) {
+            showStatus('Dynamic prompt updated successfully!', 'success');
+        });
+        
+        socket.on('generation_params_updated', function(data) {
+            // Silently update parameters - no status message for slider updates
+            // showStatus('Generation parameters updated: ' + data.message, 'success');
+        });
+        
+        socket.on('kv_cache_sequence_updated', function(data) {
+            showStatus('KV cache sequence updated: ' + data.message, 'success');
+        });
+        
+        socket.on('kv_cache_scale_sequence_updated', function(data) {
+            showStatus('KV cache scale sequence updated: ' + data.message, 'success');
+        });
+        
+        socket.on('timestep_kv_cache_scale_updated', function(data) {
+            showStatus('Timestep KV cache scale updated: ' + data.message, 'success');
+        });
+        
+        socket.on('sinusoidal_schedule_generated', function(data) {
+            // Display the plot
+            const plotContainer = document.getElementById('sinusoidal-plot-container');
+            const plotImage = document.getElementById('sinusoidal-plot');
+            const scheduleDisplay = document.getElementById('sinusoidal-schedule-display');
+            
+            if (data.plot) {
+                plotImage.src = data.plot;
+                plotContainer.style.display = 'block';
+            }
+            
+            // Display the schedule values
+            if (data.schedule) {
+                const formattedSchedule = data.schedule.map(v => v.toFixed(1)).join(', ');
+                scheduleDisplay.textContent = `[${formattedSchedule}]`;
+                scheduleDisplay.style.display = 'block';
+            }
+            
+            showStatus(data.message, data.applied ? 'success' : 'info');
+        });
+
+        function startGeneration() {
+            const prompt = document.getElementById('prompt').value.trim();
+            if (!prompt) {
+                alert('Please enter a prompt');
+                return;
+            }
+            const seed = parseInt(document.getElementById('seed').value) || 31337;
+            const numBlocks = parseInt(document.getElementById('num-blocks').value) || 6;
+            const interpBlocks = parseInt(document.getElementById('interp-blocks').value) || 6;
+            const contextNoise = parseFloat(document.getElementById('context-noise').value) || 0;
+            const kvCacheScale = parseFloat(document.getElementById('kv-cache-scale').value) || 1;
+            
+            // Sync dynamic controls with initial values
+            document.getElementById('dynamic-context-noise').value = contextNoise;
+            document.getElementById('dynamic-context-noise-value').textContent = contextNoise;
+            document.getElementById('dynamic-kv-cache-scale').value = kvCacheScale;
+            document.getElementById('dynamic-kv-cache-scale-value').textContent = kvCacheScale;
+            const kvCacheNumFrames = parseInt(document.getElementById('kv-cache-num-frames').value);
+            document.getElementById('dynamic-kv-cache-num-frames').value = kvCacheNumFrames;
+            document.getElementById('dynamic-kv-cache-num-frames-value').textContent = kvCacheNumFrames;
+            
+            // Also sync the radio button
+            const radios = document.getElementsByName('dynamic-kv-cache-radio');
+            for (let radio of radios) {
+                if (parseInt(radio.value) === kvCacheNumFrames) {
+                    radio.checked = true;
+                    break;
+                }
+            }
+            // const totalBlocks = parseInt(document.getElementById('blocks').value) || 7;
+            const enableTorchCompile = document.getElementById('torchCompile').checked;
+            const enableFp8 = document.getElementById('fp8Toggle').checked;
+            const useTaehv = document.getElementById('taehvToggle').checked;
+
+            // Reset state
+            frameBuffer = [];
+            currentFrameIndex = 0;
+            receiveCount = 0;
+            receiveRate = 0;
+            stopPlayback();
+
+            enableControls(false);
+            startTime = Date.now();
+
+            // Get timestep value from radio buttons or custom input
+            let timestepValue = '[0]'; // default
+            const selectedTimestepRadio = document.querySelector('input[name="timestep-preset"]:checked');
+            if (selectedTimestepRadio) {
+                if (selectedTimestepRadio.value === 'custom') {
+                    timestepValue = document.getElementById('timestep-to-apply-kv-cache-scale').value.trim() || '[0]';
+                } else {
+                    timestepValue = selectedTimestepRadio.value;
+                }
+            }
+            
+            socket.emit('start_generation', {
+                prompt: prompt,
+                prompt2: document.getElementById('prompt2').value.trim(),
+                seed: seed,
+                enable_torch_compile: enableTorchCompile,
+                enable_fp8: enableFp8,
+                use_taehv: useTaehv,
+                // num_blocks: totalBlocks,
+                num_blocks: numBlocks,
+                interp_blocks: interpBlocks,
+                context_noise: contextNoise,
+                kv_cache_scale: kvCacheScale,
+                keep_first_frame: document.getElementById('keepFirstToggle').checked,
+                kv_scale_allow_first: document.getElementById('kvScaleAllowFirstToggle').checked,
+                use_kv_key_scale: document.getElementById('useKvKeyScaleToggle').checked,
+                do_kv_recomp: document.getElementById('doKvRecompToggle').checked,
+                num_frames_per_block: parseInt(document.getElementById('numFramesPerBlock').value) || 3,
+                kv_cache_num_frames: parseInt(document.getElementById('kv-cache-num-frames').value) || 21,
+                kv_cache_num_frames_sequence: document.getElementById('kv-cache-num-frames-sequence').value.trim(),
+                kv_cache_num_scale_sequence: document.getElementById('kv-cache-num-scale-sequence').value.trim(),
+                timestep_to_apply_kv_cache_scale: timestepValue || '[0]',  // Use input value or default to [0]
+                do_prompt_expand: document.getElementById('promptExpandToggle').checked,
+                // Add sinusoidal parameters
+                sinusoidal_kv_enabled: document.getElementById('sinusoidal-kv-enabled').checked,
+                sinusoidal_min_value: parseFloat(document.getElementById('sinusoidal-min-value').value),
+                sinusoidal_max_value: parseFloat(document.getElementById('sinusoidal-max-value').value),
+                sinusoidal_frequency: parseFloat(document.getElementById('sinusoidal-frequency').value)
+            });
+            
+            // Always generate a sinusoidal schedule alongside a new generation
+            setTimeout(() => {
+                generateSinusoidalSchedule();
+            }, 1000);
+            
+        }
+
+        function stopGeneration() {
+            socket.emit('stop_generation');
+            enableControls(true);
+        }
+
+        async function swapCheckpoint() {
+            const path = document.getElementById('checkpointPath').value.trim();
+            if (!path) {
+                alert('Please enter a checkpoint path');
+                return;
+            }
+            try {
+                updateProgress(0, 'Swapping checkpoint...');
+                const res = await fetch('/api/swap_checkpoint', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.ok) {
+                    showStatus(`Swap failed: ${data.error || res.statusText}`, 'error');
+                } else {
+                    showStatus(data.message || 'Checkpoint swapped', 'success');
+                }
+            } catch (e) {
+                showStatus(`Swap failed: ${e}`, 'error');
+            } finally {
+                updateProgress(0, 'Ready');
+            }
+        }
+
+        function togglePlayback() {
+            if (isPlaying) {
+                stopPlayback();
+            } else {
+                startPlayback();
+            }
+        }
+
+        function startPlayback() {
+            if (frameBuffer.length === 0) return;
+
+            isPlaying = true;
+            document.getElementById('playBtn').textContent = '⏸️ Pause';
+            document.getElementById('playBtn').disabled = false;
+            document.getElementById('resetBtn').disabled = false;
+
+            updatePlaybackTiming();
+            // showStatus('Playback started', 'info');
+        }
+
+        function stopPlayback() {
+            isPlaying = false;
+            if (playbackInterval) {
+                clearInterval(playbackInterval);
+                playbackInterval = null;
+            }
+            document.getElementById('playBtn').textContent = '▶️ Play';
+        }
+
+        function resetPlayback() {
+            stopPlayback();
+
+            // Clear the entire frame buffer
+            frameBuffer = [];
+            currentFrameIndex = 0;
+            receiveCount = 0;
+            receiveRate = 0;
+
+            // Reset video display to initial state
+            const img = document.getElementById('videoFrame');
+            const placeholder = document.getElementById('placeholderText');
+
+            img.src = '';
+            img.style.display = 'none';
+            placeholder.style.display = 'block';
+
+            // Update UI
+            updateBufferInfo();
+            updateFrameInfo('Reset - buffer cleared');
+
+            // Disable playback controls since there's no content
+            document.getElementById('playBtn').disabled = true;
+            document.getElementById('resetBtn').disabled = true;
+        }
+
+        function updatePlaybackSpeed() {
+            playbackSpeed = parseFloat(document.getElementById('playbackSpeed').value);
+            if (isPlaying) {
+                updatePlaybackTiming();
+            }
+        }
+
+        function updatePlaybackTiming() {
+            if (playbackInterval) {
+                clearInterval(playbackInterval);
+            }
+
+            if (isPlaying) {
+                const interval = (1000 / targetFps) / playbackSpeed;
+                playbackInterval = setInterval(displayNextFrame, interval);
+            }
+        }
+
+        function displayNextFrame() {
+            if (currentFrameIndex >= frameBuffer.length) {
+                // Reached end of buffer
+                if (document.querySelector('#progressFill').style.width === '100%') {
+                    // Generation complete, stop playback
+                    stopPlayback();
+                    // showStatus('Playback complete', 'success');
+                }
+                return;
+            }
+
+            const frameData = frameBuffer[currentFrameIndex];
+            displayFrame(frameData);
+            currentFrameIndex++;
+
+            updateBufferInfo();
+        }
+
+        function displayFrame(frameData) {
+            const img = document.getElementById('videoFrame');
+            const placeholder = document.getElementById('placeholderText');
+
+            img.src = frameData.data;
+            img.style.display = 'block';
+            placeholder.style.display = 'none';
+
+            const elapsed = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : '0';
+            updateFrameInfo(`Frame ${frameData.frame_index + 1} | Block ${frameData.block_index + 1} | ${elapsed}s elapsed | ${targetFps} FPS @ ${playbackSpeed}x speed`);
+        }
+
+        function updateBufferInfo() {
+            document.getElementById('bufferCount').textContent = frameBuffer.length;
+            document.getElementById('displayedCount').textContent = currentFrameIndex;
+            // document.getElementById('receiveRate').textContent = receiveRate;
+        }
+
+        function setQuickPrompt(type) {
+            const promptBox = document.getElementById('prompt');
+            if (type === 'quick-demo-1') {
+                promptBox.value = 'A stylish woman walks down a Tokyo street filled with warm glowing neon and animated city signage. She wears a black leather jacket, a long red dress, and black boots, and carries a black purse. She wears sunglasses and red lipstick. She walks confidently and casually. The street is damp and reflective, creating a mirror effect of the colorful lights. Many pedestrians walk about.';
+            } else if (type === 'quick-demo-2') {
+                promptBox.value = 'A white and orange tabby cat is seen happily darting through a dense garden, as if chasing something. Its eyes are wide and happy as it jogs forward, scanning the branches, flowers, and leaves as it walks. The path is narrow as it makes its way between all the plants. the scene is captured from a ground-level angle, following the cat closely, giving a low and intimate perspective. The image is cinematic with warm tones and a grainy texture. The scattered daylight between the leaves and plants above creates a warm contrast, accentuating the cat’s orange fur. The shot is clear and sharp, with a shallow depth of field.';
+            }
+        }
+
+        function enableControls(enabled) {
+            document.getElementById('startBtn').disabled = !enabled;
+            document.getElementById('stopBtn').disabled = enabled;
+        }
+
+        function updateProgress(progress, message) {
+            document.getElementById('progressFill').style.width = progress + '%';
+            document.getElementById('progressText').textContent = message;
+        }
+
+        function updateFrameInfo(text) {
+            document.getElementById('frameInfo').textContent = text;
+        }
+
+        function showStatus(message, type) {
+            const container = document.getElementById('statusContainer');
+            const statusDiv = document.createElement('div');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+
+            container.insertBefore(statusDiv, container.firstChild);
+
+            // Remove old status messages (keep only last 3)
+            while (container.children.length > 3) {
+                container.removeChild(container.lastChild);
+            }
+
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (statusDiv.parentNode) {
+                    statusDiv.parentNode.removeChild(statusDiv);
+                }
+            }, 5000);
+        }
+
+        function updateDynamicPrompt() {
+            const dynamicPrompt = document.getElementById('dynamicPrompt').value.trim();
+            const dynamicInterpBlocks = parseInt(document.getElementById('dynamic-interp-blocks').value) || 6;
+            
+            if (!dynamicPrompt) {
+                alert('Please enter a dynamic prompt');
+                return;
+            }
+            
+            const data = {
+                dynamic_prompt: dynamicPrompt,
+                dynamic_interp_blocks: dynamicInterpBlocks
+            };
+            
+            // Check for selected KV cache frames sequence preset
+            const selectedFramesPreset = document.querySelector('input[name="kv-sequence-preset"]:checked');
+            if (selectedFramesPreset) {
+                data.sequence = selectedFramesPreset.value;
+                showStatus('Including frames sequence: ' + selectedFramesPreset.value, 'info');
+            }
+            
+            // Check for selected KV cache scale sequence preset
+            const selectedScalePreset = document.querySelector('input[name="kv-scale-sequence-preset"]:checked');
+            if (selectedScalePreset) {
+                data.scale_sequence = selectedScalePreset.value;
+                showStatus('Including scale sequence: ' + selectedScalePreset.value, 'info');
+            }
+            
+            // Check for selected timestep preset
+            const selectedTimestepPreset = document.querySelector('input[name="timestep-kv-scale-preset"]:checked');
+            if (selectedTimestepPreset) {
+                data.timestep_sequence = selectedTimestepPreset.value;
+                showStatus('Including timestep sequence: ' + selectedTimestepPreset.value, 'info');
+            }
+
+            if (selectedScalePreset) {
+                data.scale_sequence = selectedScalePreset.value;
+            }
+            
+            socket.emit('update_dynamic_prompt', data);
+            
+            // Also send separate updates for scale sequence and timestep if they exist
+            // if (selectedScalePreset) {
+            //     socket.emit('update_kv_cache_scale_sequence', {
+            //         sequence: selectedScalePreset.value
+            //     });
+            // }
+            
+            if (selectedTimestepPreset) {
+                socket.emit('update_timestep_kv_cache_scale', {
+                    timesteps: selectedTimestepPreset.value
+                });
+            }
+            
+            showStatus('Updating dynamic prompt and sequences...', 'info');
+        }
+        
+        function updateKVCacheSequence() {
+            const sequenceText = document.getElementById('dynamic-kv-sequence-text').value.trim();
+            
+            if (!sequenceText) {
+                alert('Please enter a sequence');
+                return;
+            }
+            
+            socket.emit('update_kv_cache_sequence', {
+                sequence: sequenceText
+            });
+            
+            showStatus('Adding KV cache sequence: ' + sequenceText, 'info');
+            
+            // Clear the input after sending
+            document.getElementById('dynamic-kv-sequence-text').value = '';
+        }
+        
+        function applyPresetSequence() {
+            const selectedPreset = document.querySelector('input[name="kv-sequence-preset"]:checked');
+            
+            if (!selectedPreset) {
+                alert('Please select a preset sequence');
+                return;
+            }
+            
+            const sequence = selectedPreset.value;
+            
+            socket.emit('update_kv_cache_sequence', {
+                sequence: sequence
+            });
+            
+            showStatus('Applied preset sequence: ' + sequence, 'info');
+        }
+        
+        function updateKVCacheScaleSequence() {
+            const sequenceText = document.getElementById('dynamic-kv-scale-sequence-text').value.trim();
+            
+            if (!sequenceText) {
+                alert('Please enter a scale sequence');
+                return;
+            }
+            
+            socket.emit('update_kv_cache_scale_sequence', {
+                sequence: sequenceText
+            });
+            
+            showStatus('Adding KV cache scale sequence: ' + sequenceText, 'info');
+            
+            // Clear the input after sending
+            document.getElementById('dynamic-kv-scale-sequence-text').value = '';
+        }
+        
+        function applyScalePresetSequence() {
+            const selectedPreset = document.querySelector('input[name="kv-scale-sequence-preset"]:checked');
+            
+            if (!selectedPreset) {
+                alert('Please select a preset scale sequence');
+                return;
+            }
+            
+            const sequence = selectedPreset.value;
+            
+            socket.emit('update_kv_cache_scale_sequence', {
+                sequence: sequence
+            });
+            
+            showStatus('Applied preset scale sequence: ' + sequence, 'info');
+        }
+        
+        function updateTimestepKVCacheScale() {
+            const timestepText = document.getElementById('dynamic-timestep-kv-scale-text').value.trim();
+            
+            if (!timestepText) {
+                alert('Please enter a timestep list');
+                return;
+            }
+            
+            socket.emit('update_timestep_kv_cache_scale', {
+                timesteps: timestepText
+            });
+            
+            showStatus('Setting timesteps to apply KV cache scale: ' + timestepText, 'info');
+            
+            // Clear the input after sending
+            document.getElementById('dynamic-timestep-kv-scale-text').value = '';
+        }
+        
+        function applyTimestepPreset() {
+            const selectedPreset = document.querySelector('input[name="timestep-kv-scale-preset"]:checked');
+            
+            if (!selectedPreset) {
+                alert('Please select a preset timestep list');
+                return;
+            }
+            
+            const timesteps = selectedPreset.value;
+            
+            socket.emit('update_timestep_kv_cache_scale', {
+                timesteps: timesteps
+            });
+            
+            showStatus('Applied preset timesteps: ' + timesteps, 'info');
+        }
+        
+        function updateGenerationParams() {
+            const contextNoise = parseFloat(document.getElementById('dynamic-context-noise').value);
+            const kvCacheScale = parseFloat(document.getElementById('dynamic-kv-cache-scale').value);
+            const kvCacheNumFrames = parseInt(document.getElementById('dynamic-kv-cache-num-frames').value);
+            const varKvThresh = parseFloat(document.getElementById('dynamic-var-kv-thresh').value);
+            const threshKvScale = parseFloat(document.getElementById('dynamic-thresh-kv-scale').value);
+            const doPromptExpand = document.getElementById('dynamicPromptExpand').checked;
+            
+            socket.emit('update_generation_params', {
+                context_noise: contextNoise,
+                kv_cache_scale: kvCacheScale,
+                kv_cache_num_frames: kvCacheNumFrames,
+                var_kv_thresh: varKvThresh,
+                thresh_kv_scale: threshKvScale,
+                do_prompt_expand: doPromptExpand
+            });
+            
+            // Don't show status for every slider update - too spammy
+            // showStatus('Updating generation parameters...', 'info');
+        }
+
+        async function downloadLastVideo() {
+            try {
+                const res = await fetch('/api/download_last_video');
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    showStatus(`No video to download: ${data.error || res.statusText}`, 'error');
+                    return;
+                }
+                const blob = await res.blob();
+                // Try to extract filename from Content-Disposition
+                let filename = 'video.mp4';
+                const cd = res.headers.get('Content-Disposition');
+                if (cd) {
+                    const match = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+                    if (match) {
+                        filename = decodeURIComponent(match[1] || match[2] || filename);
+                    }
+                }
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                showStatus('Download started', 'success');
+            } catch (e) {
+                showStatus(`Download failed: ${e}`, 'error');
+            }
+        }
+        
+        function generateSinusoidalSchedule() {
+            const minValue = parseFloat(document.getElementById('sin-min-value').value);
+            const maxValue = parseFloat(document.getElementById('sin-max-value').value);
+            const frequency = parseFloat(document.getElementById('sin-frequency').value);
+            
+            // Validate min < max
+            if (minValue >= maxValue) {
+                alert('Min value must be less than max value');
+                return;
+            }
+            
+            // Get current num_blocks value or use default
+            const numBlocks = parseInt(document.getElementById('num-blocks').value) || 7;
+            
+            socket.emit('generate_sinusoidal_kv_schedule', {
+                min_value: minValue,
+                max_value: maxValue,
+                frequency: frequency,
+                num_blocks: numBlocks
+            });
+            
+            showStatus('Generating sinusoidal KV cache schedule...', 'info');
+        }
+    </script>
+</body>
+</html>

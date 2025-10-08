@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Self-Forcing Text-to-Video Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+            --bg: #0b1120;
+            --surface: rgba(15, 23, 42, 0.82);
+            --surface-soft: rgba(17, 24, 39, 0.72);
+            --border: rgba(148, 163, 184, 0.16);
+            --text-primary: #e2e8f0;
+            --text-muted: rgba(148, 163, 184, 0.78);
+            --accent: #38bdf8;
+            --accent-strong: #2563eb;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text-primary);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: clamp(24px, 5vw, 64px);
+            font-family: inherit;
+        }
+
+        .page {
+            width: min(960px, 100%);
+            display: flex;
+            flex-direction: column;
+            gap: clamp(16px, 3vw, 28px);
+        }
+
+        .viewer {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .video-frame {
+            background: var(--surface);
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            padding: clamp(12px, 3vw, 20px);
+        }
+
+        canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 12px;
+            background: #000;
+        }
+
+        .status-strip {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            letter-spacing: 0.02em;
+            color: var(--text-muted);
+            padding: 4px 4px 0;
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .status-strip .readout {
+            display: inline-flex;
+            gap: 6px;
+            align-items: baseline;
+        }
+
+        .status-strip .readout span {
+            font-variant-numeric: tabular-nums;
+            color: var(--text-primary);
+        }
+
+        .control-surface {
+            background: var(--surface-soft);
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            padding: clamp(20px, 4vw, 28px);
+            display: flex;
+            flex-direction: column;
+            gap: clamp(16px, 3vw, 26px);
+        }
+
+        .action-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            appearance: none;
+            border: none;
+            border-radius: 12px;
+            padding: 11px 22px;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.2s ease;
+            background-size: 100%;
+        }
+
+        button.primary {
+            color: #0b1120;
+            background-image: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        }
+
+        button.primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(37, 99, 235, 0.28);
+        }
+
+        button.secondary {
+            color: var(--text-primary);
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid rgba(148, 163, 184, 0.26);
+        }
+
+        button.secondary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.22);
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .slider-block {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 220px;
+        }
+
+        .slider-block label {
+            font-size: 12px;
+            letter-spacing: 0.02em;
+            color: var(--text-muted);
+        }
+
+        input[type="range"] {
+            flex: 1;
+            appearance: none;
+            height: 6px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, rgba(56, 189, 248, 0.75), rgba(37, 99, 235, 0.65));
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 2px solid rgba(37, 99, 235, 0.7);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 16px rgba(37, 99, 235, 0.38);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 2px solid rgba(37, 99, 235, 0.7);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+        }
+
+        label {
+            font-size: 12px;
+            letter-spacing: 0.02em;
+            text-transform: none;
+            color: var(--text-muted);
+        }
+
+        .prompt-block {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        textarea,
+        input[type="number"],
+        input[type="text"] {
+            width: 100%;
+            padding: 14px 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: rgba(15, 23, 42, 0.72);
+            color: var(--text-primary);
+            font-size: 15px;
+            line-height: 1.5;
+            transition: border 0.2s ease, box-shadow 0.25s ease, transform 0.2s ease;
+            caret-color: var(--accent);
+        }
+
+        textarea {
+            min-height: 140px;
+            resize: vertical;
+        }
+
+        textarea::placeholder,
+        input::placeholder {
+            color: rgba(148, 163, 184, 0.55);
+        }
+
+        textarea:focus,
+        input[type="number"]:focus,
+        input[type="text"]:focus {
+            outline: none;
+            border-color: rgba(56, 189, 248, 0.6);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .param-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 16px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .seed-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .seed-row button {
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+
+        .slider-field .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .slider-value {
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+            min-width: 32px;
+            text-align: right;
+            color: var(--text-primary);
+        }
+
+        @media (max-width: 720px) {
+            .action-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .button-row {
+                width: 100%;
+            }
+
+            .button-row button {
+                flex: 1;
+            }
+
+            button {
+                width: 100%;
+            }
+
+            .seed-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+
+</head>
+<body>
+    <div class="page">
+        <section class="viewer">
+            <div class="video-frame">
+                <canvas id="videoCanvas" width="832" height="480"></canvas>
+            </div>
+            <div class="status-strip">
+                <span id="statusLine" class="status-text">Disconnected</span>
+                <span class="readout">Playback <span id="playbackFpsValue">8</span> fps</span>
+                <span class="readout">Blocks <span id="numBlocksStatusValue">9</span></span>
+            </div>
+        </section>
+
+        <section class="control-surface">
+            <div class="action-row">
+                <div class="button-row">
+                    <button id="startBtn" class="primary" type="button">Start</button>
+                    <button id="stopBtn" class="secondary" type="button" disabled>Stop</button>
+                </div>
+                <div class="slider-block">
+                    <label for="playbackFps">Playback</label>
+                    <input id="playbackFps" type="range" min="1" max="30" value="8">
+                </div>
+            </div>
+
+            <div class="prompt-block">
+                <label for="prompt">Prompt</label>
+                <textarea id="prompt" placeholder="Describe the short video you want to synthesize..."></textarea>
+            </div>
+
+            <div class="param-grid">
+                <div class="field">
+                    <label for="width">Width (pixels)</label>
+                    <input id="width" type="number" min="64" step="8" value="832">
+                </div>
+                <div class="field">
+                    <label for="height">Height (pixels)</label>
+                    <input id="height" type="number" min="64" step="8" value="480">
+                </div>
+                <div class="field">
+                    <label for="seed">Seed (optional)</label>
+                    <div class="seed-row">
+                        <input id="seed" type="number" min="0" step="1" placeholder="random">
+                        <button id="randomSeedBtn" class="secondary" type="button">Randomize</button>
+                    </div>
+                </div>
+                <div class="field slider-field">
+                    <label for="numBlocks">Number of Blocks</label>
+                    <div class="slider-row">
+                        <input id="numBlocks" type="range" min="1" max="32" value="9">
+                        <span id="numBlocksValue" class="slider-value">9</span>
+                    </div>
+                </div>
+            </div>
+</section>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/msgpack-lite/0.1.26/msgpack.min.js" integrity="sha512-ybfpeTdBPWgkSggCDzKHFOKRSjp6tYmddGdeSGcDGMtXJ632htiE/n9ceJ70KzOPMUYtI14jOgx06FG0jFbh/Q==" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@msgpack/msgpack@2.8.0/dist/msgpack.min.js" integrity="sha384-yVS19QlZIgJsCm2oAChAG0sEUcWRuIIs3y+jz3+bM5DN+JVpn2pDaE6AubutzIth" crossorigin="anonymous"></script>
+    <script>
+        (function () {
+            const builtinMsgPackEncode = (() => {
+                const textEncoder = new TextEncoder();
+
+                const ensureUint8Array = (value) => (value instanceof Uint8Array ? value : new Uint8Array(value));
+
+                const writeUInt8 = (buffer, value) => buffer.push(value & 0xff);
+                const writeUInt16 = (buffer, value) => {
+                    buffer.push((value >>> 8) & 0xff, value & 0xff);
+                };
+                const writeUInt32 = (buffer, value) => {
+                    buffer.push((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+                };
+                const writeInt8 = (buffer, value) => buffer.push(value & 0xff);
+                const writeInt16 = (buffer, value) => {
+                    buffer.push((value >>> 8) & 0xff, value & 0xff);
+                };
+                const writeInt32 = (buffer, value) => {
+                    buffer.push((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+                };
+                const writeFloat64 = (buffer, value) => {
+                    const array = new ArrayBuffer(8);
+                    new DataView(array).setFloat64(0, value);
+                    buffer.push(...new Uint8Array(array));
+                };
+
+                const encodeString = (buffer, value) => {
+                    const utf8 = ensureUint8Array(textEncoder.encode(value));
+                    const length = utf8.length;
+                    if (length <= 31) {
+                        writeUInt8(buffer, 0xa0 | length);
+                    } else if (length <= 0xff) {
+                        writeUInt8(buffer, 0xd9);
+                        writeUInt8(buffer, length);
+                    } else if (length <= 0xffff) {
+                        writeUInt8(buffer, 0xda);
+                        writeUInt16(buffer, length);
+                    } else {
+                        writeUInt8(buffer, 0xdb);
+                        writeUInt32(buffer, length);
+                    }
+                    buffer.push(...utf8);
+                };
+
+                const encodeNumber = (buffer, value) => {
+                    if (Number.isInteger(value)) {
+                        if (value >= 0 && value <= 0x7f) {
+                            writeUInt8(buffer, value);
+                        } else if (value < 0 && value >= -32) {
+                            writeInt8(buffer, value);
+                        } else if (value >= 0 && value <= 0xff) {
+                            writeUInt8(buffer, 0xcc);
+                            writeUInt8(buffer, value);
+                        } else if (value >= 0 && value <= 0xffff) {
+                            writeUInt8(buffer, 0xcd);
+                            writeUInt16(buffer, value);
+                        } else if (value >= 0 && value <= 0xffffffff) {
+                            writeUInt8(buffer, 0xce);
+                            writeUInt32(buffer, value);
+                        } else if (value >= -0x80 && value <= 0x7f) {
+                            writeUInt8(buffer, 0xd0);
+                            writeInt8(buffer, value);
+                        } else if (value >= -0x8000 && value <= 0x7fff) {
+                            writeUInt8(buffer, 0xd1);
+                            writeInt16(buffer, value);
+                        } else if (value >= -0x80000000 && value <= 0x7fffffff) {
+                            writeUInt8(buffer, 0xd2);
+                            writeInt32(buffer, value);
+                        } else {
+                            writeUInt8(buffer, 0xd3);
+                            const bigint = BigInt(value);
+                            const high = Number((bigint >> 32n) & 0xffffffffn);
+                            const low = Number(bigint & 0xffffffffn);
+                            writeInt32(buffer, high);
+                            writeInt32(buffer, low);
+                        }
+                    } else {
+                        writeUInt8(buffer, 0xcb);
+                        writeFloat64(buffer, value);
+                    }
+                };
+
+                const encodeArray = (buffer, value) => {
+                    const length = value.length;
+                    if (length < 16) {
+                        writeUInt8(buffer, 0x90 | length);
+                    } else if (length <= 0xffff) {
+                        writeUInt8(buffer, 0xdc);
+                        writeUInt16(buffer, length);
+                    } else {
+                        writeUInt8(buffer, 0xdd);
+                        writeUInt32(buffer, length);
+                    }
+                    value.forEach((item) => encodeValue(buffer, item));
+                };
+
+                const encodeObject = (buffer, value) => {
+                    const entries = Object.entries(value).filter(([, v]) => v !== undefined);
+                    const length = entries.length;
+                    if (length < 16) {
+                        writeUInt8(buffer, 0x80 | length);
+                    } else if (length <= 0xffff) {
+                        writeUInt8(buffer, 0xde);
+                        writeUInt16(buffer, length);
+                    } else {
+                        writeUInt8(buffer, 0xdf);
+                        writeUInt32(buffer, length);
+                    }
+                    for (const [key, entryValue] of entries) {
+                        encodeString(buffer, key);
+                        encodeValue(buffer, entryValue);
+                    }
+                };
+
+                function encodeValue(buffer, value) {
+                    if (value === null) {
+                        writeUInt8(buffer, 0xc0);
+                    } else if (value === false) {
+                        writeUInt8(buffer, 0xc2);
+                    } else if (value === true) {
+                        writeUInt8(buffer, 0xc3);
+                    } else if (typeof value === "number") {
+                        encodeNumber(buffer, value);
+                    } else if (typeof value === "string") {
+                        encodeString(buffer, value);
+                    } else if (Array.isArray(value)) {
+                        encodeArray(buffer, value);
+                    } else if (value instanceof Uint8Array) {
+                        const length = value.length;
+                        if (length <= 0xff) {
+                            writeUInt8(buffer, 0xc4);
+                            writeUInt8(buffer, length);
+                        } else if (length <= 0xffff) {
+                            writeUInt8(buffer, 0xc5);
+                            writeUInt16(buffer, length);
+                        } else {
+                            writeUInt8(buffer, 0xc6);
+                            writeUInt32(buffer, length);
+                        }
+                        buffer.push(...value);
+                    } else if (value && typeof value === "object") {
+                        encodeObject(buffer, value);
+                    } else {
+                        throw new Error("Unsupported type for MsgPack encoding");
+                    }
+                }
+
+                return (input) => {
+                    const buffer = [];
+                    encodeValue(buffer, input);
+                    return new Uint8Array(buffer);
+                };
+            })();
+
+            const promptInput = document.getElementById("prompt");
+            const widthInput = document.getElementById("width");
+            const heightInput = document.getElementById("height");
+            const seedInput = document.getElementById("seed");
+            const numBlocksInput = document.getElementById("numBlocks");
+            const numBlocksValue = document.getElementById("numBlocksValue");
+            const numBlocksStatusValue = document.getElementById("numBlocksStatusValue");
+            const startBtn = document.getElementById("startBtn");
+            const stopBtn = document.getElementById("stopBtn");
+            const randomSeedBtn = document.getElementById("randomSeedBtn");
+            const playbackSlider = document.getElementById("playbackFps");
+            const playbackValue = document.getElementById("playbackFpsValue");
+            const statusLine = document.getElementById("statusLine");
+            const canvas = document.getElementById("videoCanvas");
+            const ctx = canvas.getContext("2d");
+
+            const setText = (element, value) => {
+                if (element) {
+                    element.textContent = value;
+                }
+            };
+
+            let websocket = null;
+            let decodeQueue = Promise.resolve();
+            let frameBuffer = [];
+            let playbackTimer = null;
+            let playbackFps = Number(playbackSlider?.value || 8);
+            setText(playbackValue, String(playbackFps));
+
+            const syncNumBlocksDisplay = (value) => {
+                const normalizedValue = String(value);
+                setText(numBlocksValue, normalizedValue);
+                setText(numBlocksStatusValue, normalizedValue);
+            };
+
+            const log = (message) => {
+                const timestamp = new Date().toLocaleTimeString();
+                console.log("[" + timestamp + "] " + message);
+            };
+
+            const updateStatus = (text) => {
+                setText(statusLine, text);
+                log(text);
+            };
+
+            const setButtons = (running) => {
+                startBtn.disabled = running;
+                stopBtn.disabled = !running;
+            };
+
+            const randomSeed = () => Math.floor(Math.random() * (1 << 24));
+
+            numBlocksInput.addEventListener("input", () => {
+                syncNumBlocksDisplay(numBlocksInput.value);
+            });
+
+            syncNumBlocksDisplay(numBlocksInput.value || numBlocksValue.textContent || 9);
+
+            randomSeedBtn.addEventListener("click", () => {
+                const seed = randomSeed();
+                seedInput.value = seed;
+                log("Seed set to " + seed);
+            });
+
+            playbackSlider.addEventListener("input", () => {
+                playbackFps = Number(playbackSlider.value) || 1;
+                setText(playbackValue, String(playbackFps));
+                if (playbackTimer !== null) {
+                    startPlaybackLoop();
+                }
+            });
+
+            const closeSocket = (reason) => {
+                if (websocket && (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING)) {
+                    websocket.close(1000, reason || "client closing");
+                }
+                websocket = null;
+            };
+
+            const drawNextFrame = () => {
+                if (!frameBuffer.length) return;
+                const bitmap = frameBuffer.shift();
+                canvas.width = bitmap.width;
+                canvas.height = bitmap.height;
+                ctx.drawImage(bitmap, 0, 0);
+                if (typeof bitmap.close === "function") {
+                    bitmap.close();
+                }
+            };
+
+            const startPlaybackLoop = () => {
+                stopPlaybackLoop();
+                const intervalMs = Math.max(10, Math.floor(1000 / Math.max(1, playbackFps)));
+                playbackTimer = window.setInterval(drawNextFrame, intervalMs);
+            };
+
+            const stopPlaybackLoop = () => {
+                if (playbackTimer !== null) {
+                    window.clearInterval(playbackTimer);
+                    playbackTimer = null;
+                }
+            };
+
+            const queueFrameDecode = (data) => {
+                decodeQueue = decodeQueue.then(async () => {
+                    if (!data || (data.byteLength !== undefined && data.byteLength === 0)) {
+                        return;
+                    }
+                    const blob = data instanceof Blob ? data : new Blob([data], { type: "image/jpeg" });
+                    try {
+                        const bitmap = await createImageBitmap(blob);
+                        frameBuffer.push(bitmap);
+                    } catch (error) {
+                        console.error("Failed to decode frame", error);
+                        log("Failed to decode frame: " + error.message);
+                    }
+                }).catch((error) => {
+                    console.error("Frame decode pipeline error", error);
+                    log("Frame decode pipeline error: " + error.message);
+                });
+            };
+
+            const sendParams = () => {
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+                const prompt = promptInput.value.trim();
+                if (!prompt) {
+                    updateStatus("Please enter a prompt before starting generation.");
+                    setButtons(false);
+                    stopPlaybackLoop();
+                    closeSocket("missing prompt");
+                    return;
+                }
+                const width = Math.max(64, Math.round(Number(widthInput.value) / 8) * 8);
+                const height = Math.max(64, Math.round(Number(heightInput.value) / 8) * 8);
+                widthInput.value = width;
+                heightInput.value = height;
+
+                const payload = {
+                    prompt: prompt,
+                    width: width,
+                    height: height,
+                    num_blocks: Number(numBlocksInput.value),
+                };
+                syncNumBlocksDisplay(payload.num_blocks);
+
+                const rawSeed = seedInput.value.trim();
+                if (rawSeed !== "") {
+                    const numericSeed = Number(rawSeed);
+                    if (!Number.isNaN(numericSeed) && Number.isFinite(numericSeed)) {
+                        payload.seed = Math.floor(numericSeed);
+                    }
+                }
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                frameBuffer = [];
+                decodeQueue = Promise.resolve();
+                playbackFps = Number(playbackSlider.value) || 8;
+                setText(playbackValue, String(playbackFps));
+                startPlaybackLoop();
+
+                try {
+                    const encoderCandidate =
+                        (window.msgpack && typeof window.msgpack.encode === "function" && ((value) => window.msgpack.encode(value))) ||
+                        (window.MessagePack && typeof window.MessagePack.encode === "function" && ((value) => window.MessagePack.encode(value))) ||
+                        builtinMsgPackEncode;
+                    const encoded = encoderCandidate(payload);
+                    const payloadBuffer = encoded instanceof Uint8Array
+                        ? encoded
+                        : new Uint8Array(encoded.buffer ? encoded.buffer : encoded);
+                    websocket.send(payloadBuffer);
+                    updateStatus("Generation request sent.");
+                } catch (error) {
+                    console.error("Failed to encode parameters", error);
+                    updateStatus("Failed to encode parameters: " + error.message);
+                }
+            };
+
+            const startGeneration = () => {
+                if (websocket && (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING)) {
+                    closeSocket("restarting");
+                }
+
+
+                const sessionId = (window.crypto && window.crypto.randomUUID)
+                    ? window.crypto.randomUUID()
+                    : Math.random().toString(36).slice(2, 10);
+
+                const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+                const endpoint = protocol + "://" + window.location.host + "/session/" + sessionId;
+                updateStatus("Connecting to " + endpoint);
+                setButtons(true);
+                stopPlaybackLoop();
+
+                websocket = new WebSocket(endpoint);
+                websocket.binaryType = "arraybuffer";
+
+                websocket.addEventListener("open", () => {
+                    updateStatus("Connected. Waiting for worker...");
+                });
+
+                websocket.addEventListener("message", (event) => {
+                    if (typeof event.data === "string") {
+                        try {
+                            const message = JSON.parse(event.data);
+                            if (message.worker) {
+                                log("Worker: " + message.worker);
+                            }
+                            if (message.status === "ready") {
+                                updateStatus("Worker ready. Sending parameters...");
+                                sendParams();
+                            } else if (message.error) {
+                                updateStatus("Server error: " + message.error);
+                            } else if (typeof message.status === "string") {
+                                updateStatus(message.status);
+                            }
+                        } catch (error) {
+                            log("Text message: " + event.data);
+                        }
+                        return;
+                    }
+
+                    const buffer = event.data instanceof ArrayBuffer ? event.data : event.data.buffer;
+                    queueFrameDecode(buffer);
+                });
+
+                websocket.addEventListener("close", (event) => {
+                    updateStatus("Session ended (" + event.code + ").");
+                    setButtons(false);
+                    decodeQueue = Promise.resolve();
+                    frameBuffer = [];
+                    stopPlaybackLoop();
+                });
+
+                websocket.addEventListener("error", () => {
+                    updateStatus("WebSocket error. Check server logs.");
+                    stopPlaybackLoop();
+                });
+            };
+
+            const stopGeneration = () => {
+                if (!websocket) {
+                    return;
+                }
+                updateStatus("Stopping session.");
+                closeSocket("stopped by user");
+                setButtons(false);
+                stopPlaybackLoop();
+            };
+
+            startBtn.addEventListener("click", startGeneration);
+            stopBtn.addEventListener("click", stopGeneration);
+            window.addEventListener("beforeunload", () => closeSocket("page exit"));
+        })();
+    </script>
+</body>
+</html>
