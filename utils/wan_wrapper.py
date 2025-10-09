@@ -144,6 +144,7 @@ class WanDiffusionWrapper(torch.nn.Module):
         # For non-causal diffusion, all frames share the same timestep
         self.uniform_timestep = not is_causal
 
+        print("timestep shift, ", timestep_shift)
         self.scheduler = FlowMatchScheduler(
             shift=timestep_shift, sigma_min=0.0, extra_one_step=True
         )

@@ -149,7 +149,8 @@ def load_transformer(config, meta_transformer=False):
     else:
         model_name = "Wan2.1-T2V-14B"
 
-    transformer = WanDiffusionWrapper(model_name=model_name, is_causal=True)
+    timestep_shift = getattr(config, "timestep_shift", 5.0)
+    transformer = WanDiffusionWrapper(model_name=model_name, timestep_shift=timestep_shift, is_causal=True)
     transformer.load_state_dict(state_dict)
     
     transformer = transformer.to(dtype=torch.bfloat16)
@@ -251,6 +252,13 @@ def load_all(config: OmegaConf, meta_transformer=False):
     
     # Create progress bar with 4 stages
     with tqdm(total=4, desc="Loading models") as pbar:
+        # Load transformer
+        pbar.set_description("Loading transformer")
+        t_stage_start = time.time()
+        transformer = load_transformer(config)
+        log.debug(f"Loading transformer took: {time.time() - t_stage_start:.2f}s")
+        pbar.update(1)
+
         # Load text encoder
         pbar.set_description("Loading text encoder")
         t_stage_start = time.time()
@@ -258,12 +266,6 @@ def load_all(config: OmegaConf, meta_transformer=False):
         log.debug(f"Loading text encoder took: {time.time() - t_stage_start:.2f}s")
         pbar.update(1)
         
-        # Load transformer
-        pbar.set_description("Loading transformer")
-        t_stage_start = time.time()
-        transformer = load_transformer(config)
-        log.debug(f"Loading transformer took: {time.time() - t_stage_start:.2f}s")
-        pbar.update(1)
         
         # Load VAE decoder
         pbar.set_description("Loading VAE")
@@ -389,6 +391,7 @@ class GenerationSession:
         self.denoising_step_list = get_denoising_schedule(
             self.zero_padded_timesteps, self.params.strength, steps=self.params.num_denoising_steps
         )
+        print("denoising step list: ", self.denoising_step_list)
         if self.input_video is not None:
             init_denoising_strength_scaled = self.denoising_step_list[0] / 1000
             latents, _ = self.encode_v2v(models, self.input_video, max_frames=None, resample_to=16)

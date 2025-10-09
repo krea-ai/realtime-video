@@ -27,6 +27,7 @@ class CausalInferencePipeline(torch.nn.Module):
         self.denoising_step_list = torch.tensor(
             args.denoising_step_list, dtype=torch.long)
         if args.warp_denoising_step:
+            print("warping denoising step list")
             timesteps = torch.cat((self.scheduler.timesteps.cpu(), torch.tensor([0], dtype=torch.float32)))
             self.denoising_step_list = timesteps[1000 - self.denoising_step_list]
 
