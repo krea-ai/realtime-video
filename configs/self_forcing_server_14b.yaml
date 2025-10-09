@@ -2,10 +2,11 @@ real_name: Wan2.1-T2V-1.3B
 text_encoder_fsdp_wrap_strategy: size
 denoising_step_list:
 - 1000
-- 750
-- 500
-- 250
-warp_denoising_step: true # need to remove - 0 in denoising_step_list if warp_denoising_step is true
+- 937
+- 833
+- 625
+- 0
+warp_denoising_step: false
 ts_schedule: false
 num_train_timestep: 1000
 timestep_shift: 5.0
@@ -17,7 +18,7 @@ num_frame_per_block: 3
 load_raw_video: false
 model_kwargs:
   timestep_shift: 5.0
-checkpoint_path: "checkpoints/14b_400.safetensors"
+checkpoint_path: "checkpoints/14b_200.safetensors"
 use_trt: false
 use_taehv: false
 enable_fp8: false
