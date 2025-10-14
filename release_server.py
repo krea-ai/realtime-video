@@ -2,7 +2,9 @@ import torch
 torch.set_grad_enabled(False)
 from safetensors.torch import load_file, save_file
 import safetensors
+from functools import lru_cache
 from collections import deque
+from utils.scheduler import SchedulerInterface, FlowMatchScheduler
 
 import asyncio
 import random
@@ -14,7 +16,7 @@ import base64
 import threading
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict, List
 import traceback
 from typing import Callable, TYPE_CHECKING
 import queue
@@ -22,6 +24,8 @@ import uuid
 import socket
 import tempfile
 import shutil
+import subprocess
+import numpy as np
 
 if TYPE_CHECKING:
     from utils.wan_wrapper import WanDiffusionWrapper, WanTextEncoder
@@ -63,6 +67,10 @@ logging.basicConfig(
 
 # Get a logger
 log = logging.getLogger(__name__)
+
+# Global storage for session frames
+session_frames_storage: Dict[str, List[torch.Tensor]] = {}
+session_frame_locks: Dict[str, threading.Lock] = {}
 
 UUID_NIL = str(uuid.UUID(int=0))
 USE_STATIC_ENCODER_COND_DICT = os.getenv("USE_STATIC_ENCODER_COND_DICT", "false").lower() in ("true", "1", "yes")
@@ -313,6 +321,7 @@ class GenerateParams(BaseModel):
 
     input_video: str | None = None
     start_frame: bytes | str | None = None
+    timestep_shift: float = 5.0
 
     class Config:
         arbitrary_types_allowed = True
@@ -387,14 +396,17 @@ class GenerationSession:
         self.disposed = threading.Event()
         self.generation_lock = asyncio.Lock()
 
-        self.init_models(models)
+        self.init_models(models, self.params)
+        self.models = models
+
         self.denoising_step_list = get_denoising_schedule(
             self.zero_padded_timesteps, self.params.strength, steps=self.params.num_denoising_steps
         )
+
         print("denoising step list: ", self.denoising_step_list)
         if self.input_video is not None:
             init_denoising_strength_scaled = self.denoising_step_list[0] / 1000
-            latents, _ = self.encode_v2v(models, self.input_video, max_frames=None, resample_to=16)
+            latents, _ = self.encode_v2v(self.input_video, max_frames=None, resample_to=None)
             latents = latents[None].to(self.gpu, dtype=self.noise.dtype).movedim(1, 2)
 
             self.noise = latents * (1.0 - init_denoising_strength_scaled) + torch.randn(latents.shape, device=self.noise.device, dtype=self.noise.dtype, generator=self.rnd) * init_denoising_strength_scaled
@@ -460,8 +472,9 @@ class GenerationSession:
             print(f"Killing from push_frame: {e}")
             self.dispose()
     
-    def encode_v2v(self, models: "Models", video_path_or_url: str, max_frames=None, resample_to=None):
-        latents = encode_video_latent(models.vae_encoder,
+    @lru_cache(maxsize=32)
+    def encode_v2v(self, video_path_or_url: str, max_frames=None, resample_to=None):
+        latents = encode_video_latent(self.models.vae_encoder,
                                     encode_vae_cache=[None] * 55,
                                     video_path_or_url=video_path_or_url,
                                     height=self.params.height,
@@ -472,7 +485,7 @@ class GenerationSession:
                                     )
         return latents
         
-    def init_models(self, models: Models):
+    def init_models(self, models: Models, params: GenerateParams):
         for block in models.pipeline.generator.model.blocks:
             block.self_attn.local_attn_size = -1
         models.pipeline._initialize_kv_cache(batch_size=1, dtype=torch.bfloat16, device=gpu)
@@ -486,6 +499,9 @@ class GenerationSession:
         models.pipeline.local_attn_size = attn_size
 
         # this prevents a cuda sync
+        models.pipeline.scheduler = FlowMatchScheduler(shift=params.timestep_shift, sigma_min=0.0, extra_one_step=True)
+        models.pipeline.scheduler.set_timesteps(1000, training=True)
+        
         st = models.pipeline.scheduler.timesteps
         self.zero_padded_timesteps = torch.cat((st.cpu(), torch.tensor([0], dtype=torch.float32))).to(torch.cuda.current_device())
 
@@ -499,7 +515,7 @@ class GenerationSession:
             else:
                 clean_context_frames = torch.cat((clean_context_frames[:, :1], clean_context_frames[:,1:][:, -current_kv_cache_num_frames + 1:]), dim=1)
         else:
-            print("reencoding first latent frame, block idx: {}".format(self.block_idx))
+            # print("reencoding first latent frame, block idx:")
             clean_context_frames = clean_context_frames[:,1:][:, -current_kv_cache_num_frames + 1:]
             first_frame_latent = encode_video_latent(models.vae_encoder, [None]*55, resample_to=16, max_frames=81, video_path_or_url=None, frames=self.frame_context_cache[0][0].half(), height=480, width=832, stream=False,)[0].transpose(0, 1)[None]
             clean_context_frames = torch.cat((first_frame_latent, clean_context_frames), dim=1).to(self.all_latents)
@@ -742,6 +758,100 @@ async def upload_start_frame(file: UploadFile = File(...)):
     finally:
         file.file.close()
 
+@app.get("/download_video/{session_id}")
+async def download_video(session_id: str):
+    """Download the generated video as MP4 for a given session"""
+    from fastapi.responses import Response
+    
+    # Check if we have frames for this session
+    if session_id not in session_frames_storage:
+        return JSONResponse({"error": "No video data found for this session"}, status_code=404)
+    
+    # Get the frames for this session
+    frames = session_frames_storage[session_id]
+    if not frames:
+        return JSONResponse({"error": "No frames available"}, status_code=404)
+    
+    try:
+        # Combine all frame tensors
+        # frames is a list of tensors, each with shape [1, num_frames, 3, H, W]
+        all_frames = torch.cat(frames, dim=1)  # Shape: [1, total_frames, 3, H, W]
+        
+        # Save to MP4 using ffmpeg
+        mp4_data = save_video_to_bytes(all_frames, fps=16)
+        
+        if mp4_data is None:
+            return JSONResponse({"error": "Failed to generate MP4"}, status_code=500)
+        
+        # Clean up the stored frames
+        del session_frames_storage[session_id]
+        if session_id in session_frame_locks:
+            del session_frame_locks[session_id]
+        
+        # Return the MP4 file
+        return Response(
+            content=mp4_data,
+            media_type="video/mp4",
+            headers={
+                "Content-Disposition": f"attachment; filename=video_{session_id}.mp4"
+            }
+        )
+        
+    except Exception as e:
+        log.error(f"Error generating video: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+def save_video_to_bytes(pixels: torch.Tensor, fps: int = 24) -> Optional[bytes]:
+    """Save video frames to MP4 and return as bytes"""
+    try:
+        # pixels shape: [1, num_frames, 3, H, W]
+        video_tensor = pixels[0].cpu().clamp(0, 1)
+        num_frames, _, height, width = video_tensor.shape
+        
+        # Convert to uint8 RGB frames
+        video_np = (video_tensor.permute(0, 2, 3, 1).numpy() * 255).astype(np.uint8)
+        
+        # Create a temporary file for output
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
+            tmp_path = tmp_file.name
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-s", f"{width}x{height}",
+            "-pix_fmt", "rgb24",
+            "-r", str(fps),
+            "-i", "-",  # Read from stdin
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-crf", "18",  # High quality
+            "-preset", "fast",
+            tmp_path
+        ]
+        
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        process.stdin.write(video_np.tobytes())
+        process.stdin.close()
+        process.wait()
+        
+        if process.returncode != 0:
+            log.error(f"FFmpeg error: {process.stderr.read().decode()}")
+            return None
+        
+        # Read the MP4 file
+        with open(tmp_path, 'rb') as f:
+            mp4_data = f.read()
+        
+        # Clean up
+        os.unlink(tmp_path)
+        
+        return mp4_data
+        
+    except Exception as e:
+        log.error(f"Error creating video: {e}")
+        return None
+
 generate_pool = ThreadPoolExecutor(max_workers=1)
 encode_pool = ThreadPoolExecutor(max_workers=24)
 
@@ -776,6 +886,11 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
                 log.error(f"Failed to load start frame: {e}")
                 params.start_frame = None
 
+        # Initialize session frame storage
+        if id not in session_frames_storage:
+            session_frames_storage[id] = []
+            session_frame_locks[id] = threading.Lock()
+        
         frame_queue = asyncio.Queue[asyncio.Future[bytes]]()
         async def frame_sender():
             while True:
@@ -804,9 +919,20 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
                 with torch.cuda.stream(download_stream):
                     cpu_tensor.copy_(tensor)
                 return cpu_tensor.add_(1.0).mul_(0.5).clamp_(0.0, 1.0)
+            
+            def store_frames():
+                cpu_tensor = torch.zeros_like(tensor, device="cpu", pin_memory=True)
+                download_stream.wait_event(event)
+                with torch.cuda.stream(download_stream):
+                    cpu_tensor.copy_(tensor)
+                normalized = cpu_tensor.add_(1.0).mul_(0.5).clamp_(0.0, 1.0)
+                with session_frame_locks[id]:
+                    session_frames_storage[id].append(normalized.clone())
+                return normalized
 
             try:
-                cpu_frame_future = loop.run_in_executor(encode_pool, get_cpu_frames)
+                # Store frames and also send them
+                cpu_frame_future = loop.run_in_executor(encode_pool, store_frames)
 
                 for idx in range(tensor.shape[1]):
                     frame_id = frame_ids[idx] if idx < len(frame_ids) else UUID_NIL
@@ -849,7 +975,12 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
                 session = new_session()
             if frame.get("prompt", session.params.prompt) != session.params.prompt:
                 params.prompt = frame["prompt"]
-                session.interpolate_prompt_embeds(models, session.params.prompt, 4)
+                try:
+                    interp_steps = int(frame.get("interp_steps", frame.get("interpolation_steps", 4)))
+                except Exception:
+                    interp_steps = 4
+                interp_steps = max(1, int(interp_steps))
+                session.interpolate_prompt_embeds(models, session.params.prompt, interp_steps)
             if (new_seed := frame.get("seed", None)) is not None:
                 session.params.seed = int(new_seed)
             if (image := frame.get("image")):
@@ -863,9 +994,17 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
         logging.info(f"Client disconnected from api session {id}, generation session {session.session_id if session else None}")
     finally:
         logging.info(f"Terminating session")
-        if session: session.dispose()
-        if frame_sender_task: frame_sender_task.cancel()
-        if generate_task: generate_task.cancel()
+        if session:
+            session.dispose()
+        if frame_sender_task:
+            frame_sender_task.cancel()
+        if generate_task:
+            generate_task.cancel()
+        # Send session ID for video download
+        try:
+            await websocket.send_json({"session_id": id, "status": "completed"})
+        except:
+            pass
 
 @app.websocket("/session/{id}")
 async def app_session(websocket: WebSocket, id: str):

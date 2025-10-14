@@ -40,17 +40,17 @@ huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir-use-symlinks False -
    export MODEL_FOLDER=Wan-AI
    export CONFIG=configs/self_forcing_server_14b.yaml     # optional; defaults to this path
    export CUDA_VISIBLE_DEVICES=0                      # pick the GPU you want to serve on
+   export DO_COMPILE=true
    ```
 2. Start the FastAPI app with Uvicorn (one worker keeps GPU memory simple):
    ```bash
    uvicorn release_server:app --host 0.0.0.0 --port 8000
    ```
-   The first request loads the models defined by `CONFIG`, so expect a long warm-up on the initial run.
 3. Verify the server:
    - `curl http://localhost:8000/health` should return `OK`.
    - Open `http://localhost:8000/` in a browser to reach the release demo UI (`templates/release_demo.html`), adjust the prompt/parameters, and click **Start**. Frames stream over the `/session/{uuid}` websocket.
 4. Common tweaks:
-   - Set `DO_COMPILE=true` to opt into `torch.compile` (longer warm-up, faster steady state).
+   - Set `DO_COMPILE=false` to opt out of `torch.compile` (shorter warm-up, slower steady state).
 
 Stop the server with `Ctrl+C`. GPU memory is released when the process exits.
 

@@ -395,6 +395,17 @@
                 <textarea id="prompt" placeholder="Describe the short video you want to synthesize..."></textarea>
             </div>
 
+            <div class="action-row">
+                <div class="slider-block">
+                    <label for="interpSteps">Blend Steps</label>
+                    <input id="interpSteps" type="range" min="1" max="16" value="4">
+                    <span id="interpStepsValue" class="slider-value">4</span>
+                </div>
+                <div class="button-row">
+                    <button id="applyPromptBtn" class="secondary" type="button">Apply Prompt</button>
+                </div>
+            </div>
+
             <div class="field upload-field">
                 <div class="upload-label">
                     <label for="inputVideo">Input Video (optional)</label>
@@ -448,6 +459,13 @@
                     <div class="slider-row">
                         <input id="numBlocks" type="range" min="1" max="32" value="9">
                         <span id="numBlocksValue" class="slider-value">9</span>
+                    </div>
+                </div>
+                <div class="field slider-field">
+                    <label for="timestepShift">Timestep Shift</label>
+                    <div class="slider-row">
+                        <input id="timestepShift" type="range" min="2" max="7" step="0.1" value="5.0">
+                        <span id="timestepShiftValue" class="slider-value">5.00</span>
                     </div>
                 </div>
             </div>
@@ -632,6 +650,8 @@
             const denoisingStrengthContainer = document.getElementById("denoisingStrengthContainer");
             const denoisingStrengthInput = document.getElementById("denoisingStrength");
             const denoisingStrengthValue = document.getElementById("denoisingStrengthValue");
+            const timestepShiftInput = document.getElementById("timestepShift");
+            const timestepShiftValue = document.getElementById("timestepShiftValue");
             const startFrameInput = document.getElementById("startFrame");
             const startFrameStatus = document.getElementById("startFrameStatus");
             const videoPreview = document.getElementById("videoPreview");
@@ -640,6 +660,9 @@
             const startFramePreviewElement = document.getElementById("startFramePreviewElement");
             const clearVideoBtn = document.getElementById("clearVideoBtn");
             const clearStartFrameBtn = document.getElementById("clearStartFrameBtn");
+            const applyPromptBtn = document.getElementById("applyPromptBtn");
+            const interpStepsInput = document.getElementById("interpSteps");
+            const interpStepsValue = document.getElementById("interpStepsValue");
 
             const setText = (element, value) => {
                 if (element) {
@@ -655,9 +678,7 @@
             setText(playbackValue, String(playbackFps));
             let uploadedVideoPath = null;
             let uploadedStartFramePath = null;
-            let recordedFrames = [];
-            let mediaRecorder = null;
-            let recordedChunks = [];
+            let currentSessionId = null;
 
             const syncNumBlocksDisplay = (value) => {
                 const normalizedValue = String(value);
@@ -710,7 +731,15 @@
                 const value = Number(denoisingStrengthInput.value).toFixed(2);
                 setText(denoisingStrengthValue, value);
             });
-
+            timestepShiftInput.addEventListener("input", () => {
+                const value = Number(timestepShiftInput.value).toFixed(2);
+                setText(timestepShiftValue, value);
+            });
+            interpStepsInput.addEventListener("input", () => {
+                const value = String(Number(interpStepsInput.value) || 1);
+                setText(interpStepsValue, value);
+            });
+            
             startFrameInput.addEventListener("change", async () => {
                 const file = startFrameInput.files[0];
                 if (!file) {
@@ -837,80 +866,60 @@
                 if (websocket && (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING)) {
                     websocket.close(1000, reason || "client closing");
                 }
-                websocket = null;
             };
 
             const drawNextFrame = () => {
-                if (!frameBuffer.length) return;
+                if (frameBuffer.length === 0) return;
                 const bitmap = frameBuffer.shift();
-                canvas.width = bitmap.width;
-                canvas.height = bitmap.height;
-                ctx.drawImage(bitmap, 0, 0);
-                if (typeof bitmap.close === "function") {
+                ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                if (bitmap.close) {
                     bitmap.close();
                 }
             };
 
-            const startRecording = () => {
-                recordedFrames = [];
-                recordedChunks = [];
-                
-                const stream = canvas.captureStream(playbackFps);
-                const options = { mimeType: 'video/webm;codecs=vp9' };
-                
-                // Fallback to VP8 if VP9 not supported
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                    options.mimeType = 'video/webm;codecs=vp8';
-                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                        options.mimeType = 'video/webm';
-                    }
-                }
-                
-                mediaRecorder = new MediaRecorder(stream, options);
-                
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data && event.data.size > 0) {
-                        recordedChunks.push(event.data);
-                    }
-                };
-                
-                mediaRecorder.onstop = () => {
-                    enableDownload(recordedChunks.length > 0);
-                };
-                
-                mediaRecorder.start();
-                log("Recording started");
-            };
-
-            const stopRecording = () => {
-                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                    mediaRecorder.stop();
-                    log("Recording stopped");
-                }
-            };
-
-            const downloadVideo = () => {
-                if (recordedChunks.length === 0) {
-                    log("No video data to download");
+            const downloadVideo = async () => {
+                if (!currentSessionId) {
+                    log("No session ID available for download");
                     return;
                 }
                 
-                const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                a.download = 'generated-video-' + timestamp + '.webm';
-                document.body.appendChild(a);
-                a.click();
+                // Disable download button while generating MP4
+                downloadBtn.disabled = true;
+                const originalText = downloadBtn.textContent;
+                downloadBtn.textContent = "Generating MP4...";
                 
-                setTimeout(() => {
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                }, 100);
-                
-                log("Video downloaded");
+                try {
+                    const response = await fetch(`/download_video/${currentSessionId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to download video');
+                    }
+                    
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                    a.download = 'generated-video-' + timestamp + '.mp4';
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 100);
+                    
+                    log("Video downloaded as MP4");
+                    currentSessionId = null; // Clear session ID after download
+                    downloadBtn.disabled = true; // Disable until next generation
+                } catch (error) {
+                    console.error("Error downloading video:", error);
+                    log("Failed to download video: " + error.message);
+                    downloadBtn.disabled = false; // Re-enable if failed
+                } finally {
+                    downloadBtn.textContent = originalText;
+                }
             };
 
             const startPlaybackLoop = () => {
@@ -967,6 +976,7 @@
                     width: width,
                     height: height,
                     num_blocks: Number(numBlocksInput.value),
+                    timestep_shift: Number(timestepShiftInput.value),
                 };
                 syncNumBlocksDisplay(payload.num_blocks);
 
@@ -994,7 +1004,6 @@
                 decodeQueue = Promise.resolve();
                 playbackFps = Number(playbackSlider.value) || 8;
                 setText(playbackValue, String(playbackFps));
-                startRecording();
                 startPlaybackLoop();
 
                 try {
@@ -1020,15 +1029,17 @@
                 }
 
 
-                const sessionId = (window.crypto && window.crypto.randomUUID)
+                currentSessionId = (window.crypto && window.crypto.randomUUID)
                     ? window.crypto.randomUUID()
                     : Math.random().toString(36).slice(2, 10);
 
                 const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-                const endpoint = protocol + "://" + window.location.host + "/session/" + sessionId;
+                const endpoint = protocol + "://" + window.location.host + "/session/" + currentSessionId;
                 updateStatus("Connecting to " + endpoint);
                 setButtons(true);
                 stopPlaybackLoop();
+                // Reset download button state when starting a new session
+                enableDownload(false);
 
                 websocket = new WebSocket(endpoint);
                 websocket.binaryType = "arraybuffer";
@@ -1047,6 +1058,13 @@
                             if (message.status === "ready") {
                                 updateStatus("Worker ready. Sending parameters...");
                                 sendParams();
+                            } else if (message.status === "completed" || message.session_id) {
+                                // Server indicates the video is ready to download
+                                if (message.session_id) {
+                                    currentSessionId = message.session_id;
+                                }
+                                enableDownload(true);
+                                updateStatus("Generation completed. Video ready to download.");
                             } else if (message.error) {
                                 updateStatus("Server error: " + message.error);
                             } else if (typeof message.status === "string") {
@@ -1060,6 +1078,10 @@
 
                     const buffer = event.data instanceof ArrayBuffer ? event.data : event.data.buffer;
                     queueFrameDecode(buffer);
+                    // As soon as a frame arrives, enable download (server stores frames by session)
+                    if (currentSessionId) {
+                        enableDownload(true);
+                    }
                 });
 
                 websocket.addEventListener("close", (event) => {
@@ -1068,7 +1090,10 @@
                     decodeQueue = Promise.resolve();
                     frameBuffer = [];
                     stopPlaybackLoop();
-                    setTimeout(() => stopRecording(), 500);
+                    // Enable download button after generation completes
+                    if (currentSessionId) {
+                        enableDownload(true);
+                    }
                 });
 
                 websocket.addEventListener("error", () => {
@@ -1076,6 +1101,37 @@
                     stopPlaybackLoop();
                 });
             };
+
+            const sendPromptUpdate = () => {
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+                const prompt = promptInput.value.trim();
+                const steps = Number(interpStepsInput.value) || 4;
+                const payload = { prompt, interp_steps: steps };
+                try {
+                    const encoderCandidate =
+                        (window.msgpack && typeof window.msgpack.encode === "function" && ((value) => window.msgpack.encode(value))) ||
+                        (window.MessagePack && typeof window.MessagePack.encode === "function" && ((value) => window.MessagePack.encode(value))) ||
+                        builtinMsgPackEncode;
+                    const encoded = encoderCandidate(payload);
+                    const payloadBuffer = encoded instanceof Uint8Array
+                        ? encoded
+                        : new Uint8Array(encoded.buffer ? encoded.buffer : encoded);
+                    websocket.send(payloadBuffer);
+                    updateStatus("Applied prompt update.");
+                } catch (error) {
+                    console.error("Failed to encode prompt update", error);
+                }
+            };
+
+            applyPromptBtn.addEventListener("click", sendPromptUpdate);
+            promptInput.addEventListener("keydown", (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    sendPromptUpdate();
+                }
+            });
 
             const stopGeneration = () => {
                 if (!websocket) {
@@ -1085,7 +1141,10 @@
                 closeSocket("stopped by user");
                 setButtons(false);
                 stopPlaybackLoop();
-                setTimeout(() => stopRecording(), 500);
+                // Enable download button after stop
+                if (currentSessionId) {
+                    enableDownload(true);
+                }
             };
 
             startBtn.addEventListener("click", startGeneration);
