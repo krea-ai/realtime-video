@@ -1,8 +1,8 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import torch
-from flash_attn import flash_attn_func
 try:
     import flash_attn_interface
+    from flash_attn import flash_attn_func
 
     def is_hopper_gpu():
         if not torch.cuda.is_available():
