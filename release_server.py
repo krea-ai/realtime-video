@@ -273,7 +273,8 @@ def load_all(config: OmegaConf, meta_transformer=False):
         text_encoder = load_text_encoder()
         log.debug(f"Loading text encoder took: {time.time() - t_stage_start:.2f}s")
         pbar.update(1)
-        
+        gc.collect()
+        torch.cuda.empty_cache()
         
         # Load VAE decoder
         pbar.set_description("Loading VAE")
@@ -294,9 +295,13 @@ def load_all(config: OmegaConf, meta_transformer=False):
     
     models = Models(text_encoder, transformer, pipeline, vae_encoder, vae_decoder)
 
+    gc.collect()
+    torch.cuda.empty_cache()
     if DO_COMPILE:
         print("compiling models")
         compile_warmup_models(config, models)
+    gc.collect()
+    torch.cuda.empty_cache()
 
     return models
 
@@ -486,6 +491,10 @@ class GenerationSession:
         return latents
         
     def init_models(self, models: Models, params: GenerateParams):
+        attn_size = self.params.kv_cache_num_frames + models.pipeline.num_frame_per_block
+        for block in models.pipeline.generator.model.blocks:
+            block.self_attn.local_attn_size = -1
+        models.pipeline.local_attn_size = attn_size
         for block in models.pipeline.generator.model.blocks:
             block.self_attn.local_attn_size = -1
         models.pipeline._initialize_kv_cache(batch_size=1, dtype=torch.bfloat16, device=gpu)
@@ -493,10 +502,6 @@ class GenerationSession:
         models.pipeline.generator.model.block_mask = None 
 
 
-        attn_size = self.params.kv_cache_num_frames + models.pipeline.num_frame_per_block
-        for block in models.pipeline.generator.model.blocks:
-            block.self_attn.local_attn_size = -1
-        models.pipeline.local_attn_size = attn_size
 
         # this prevents a cuda sync
         models.pipeline.scheduler = FlowMatchScheduler(shift=params.timestep_shift, sigma_min=0.0, extra_one_step=True)

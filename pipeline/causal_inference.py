@@ -301,6 +301,7 @@ class CausalInferencePipeline(torch.nn.Module):
                 self.kv_cache1[i]["global_end_index"] = 0
                 self.kv_cache1[i]["local_end_index"] = 0
         else:
+            print("Initializing kv cache with shape: ", k_shape)
             for _ in range(self.num_transformer_blocks):
                 kv_cache1.append({
                     "k": torch.zeros(k_shape, dtype=dtype, device=device).contiguous(),
