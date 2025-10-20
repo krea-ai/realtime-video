@@ -25,11 +25,10 @@ If using sageattention, you can try
 If running on B200, we recommend using flash attn 4
 For H100/RTX5xxx and other GPUs, sageattention will provide the fastest speed, but it can cause oversaturated videos and faster video degradation. 
 
-Download checkpoints from
-https://huggingface.co/krea/krea-rt-14b/tree/main into `checkpoints` folder
+Download checkpoint from
+https://huggingface.co/krea/krea-realtime-video into `checkpoints` folder
 
-install ffmpeg 
-
+Install ffmpeg 
 
 huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir-use-symlinks False --local-dir wan_models/Wan2.1-T2V-1.3B
 

@@ -18,7 +18,7 @@ num_frame_per_block: 3
 load_raw_video: false
 model_kwargs:
   timestep_shift: 5.0
-checkpoint_path: "checkpoints/14b_200.safetensors"
+checkpoint_path: "checkpoints/krea-realtime-video-14b.safetensors"
 use_trt: false
 use_taehv: false
 enable_fp8: false
