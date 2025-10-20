@@ -299,7 +299,7 @@ def load_all(config: OmegaConf, meta_transformer=False):
     torch.cuda.empty_cache()
     if DO_COMPILE:
         print("compiling models")
-        compile_warmup_models(config, models)
+        compile_models(models)
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -692,7 +692,7 @@ class GenerationSession:
     def __hash__(self):
         return id(self)
 
-def compile_warmup_models(config, models: Models):
+def compile_models(models: Models):
     models.vae_decoder = torch.compile(models.vae_decoder, fullgraph=True,) 
     models.transformer = torch.compile(models.transformer)
 
