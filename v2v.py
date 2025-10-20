@@ -145,7 +145,7 @@ def encode_video_latent(vae, encode_vae_cache, resample_to=16, max_frames=81, vi
         max_frames = 1 + ((frames.shape[0] - 1) // 4) * 4
     if max_frames:
         frames = frames[:max_frames]
-    print("frames shape: ", frames.shape)
+    # print("frames shape: ", frames.shape)
 
     h = h // vae_stride[1] * vae_stride[1]
     w = w // vae_stride[2] * vae_stride[2]

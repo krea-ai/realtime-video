@@ -320,7 +320,7 @@ class GenerateParams(BaseModel):
     keep_first_frame: bool = False
     kv_cache_num_frames: int = 3
     num_blocks: int = 9
-    num_denoising_steps: int | None = 6 # use 4 for performance
+    num_denoising_steps: int | None = 5 # use 4 for performance
 
     block_on_frame: bool = False
 

@@ -462,6 +462,13 @@
                     </div>
                 </div>
                 <div class="field slider-field">
+                    <label for="numDenoisingSteps">Denoising Steps</label>
+                    <div class="slider-row">
+                        <input id="numDenoisingSteps" type="range" min="2" max="8" value="5">
+                        <span id="numDenoisingStepsValue" class="slider-value">5</span>
+                    </div>
+                </div>
+                <div class="field slider-field">
                     <label for="timestepShift">Timestep Shift</label>
                     <div class="slider-row">
                         <input id="timestepShift" type="range" min="2" max="7" step="0.1" value="5.0">
@@ -663,6 +670,8 @@
             const applyPromptBtn = document.getElementById("applyPromptBtn");
             const interpStepsInput = document.getElementById("interpSteps");
             const interpStepsValue = document.getElementById("interpStepsValue");
+            const numDenoisingStepsInput = document.getElementById("numDenoisingSteps");
+            const numDenoisingStepsValue = document.getElementById("numDenoisingStepsValue");
 
             const setText = (element, value) => {
                 if (element) {
@@ -738,6 +747,10 @@
             interpStepsInput.addEventListener("input", () => {
                 const value = String(Number(interpStepsInput.value) || 1);
                 setText(interpStepsValue, value);
+            });
+            numDenoisingStepsInput.addEventListener("input", () => {
+                const value = String(Number(numDenoisingStepsInput.value) || 6);
+                setText(numDenoisingStepsValue, value);
             });
             
             startFrameInput.addEventListener("change", async () => {
@@ -976,6 +989,7 @@
                     width: width,
                     height: height,
                     num_blocks: Number(numBlocksInput.value),
+                    num_denoising_steps: Number(numDenoisingStepsInput.value),
                     timestep_shift: Number(timestepShiftInput.value),
                 };
                 syncNumBlocksDisplay(payload.num_blocks);
