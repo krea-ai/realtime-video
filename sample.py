@@ -1,4 +1,6 @@
 import os
+import asyncio
+import time
 import torch
 import numpy as np
 from pathlib import Path
@@ -192,15 +194,6 @@ def sample_videos(
     for prompt_idx, prompt in enumerate(tqdm(prompts_list, desc="Sampling videos")):
         print(f"\n📝 Prompt {prompt_idx + 1}/{len(prompts_list)}: {prompt}")
         
-        # Create generation parameters
-        # params = GenerateParams(
-        #     prompt=prompt,
-        #     width=width,
-        #     height=height,
-        #     seed=seed + prompt_idx,  # Different seed per prompt
-        #     num_blocks=num_blocks,
-        #     is_t2v=is_t2v,
-        # )
         
         # Callback to collect frames
         all_frames = []
@@ -223,12 +216,19 @@ def sample_videos(
         # Generate all blocks
         num_blocks = params.num_blocks
         print(f"🎬 Generating {num_blocks} blocks...")
+        t_start_sampling = time.time() 
         for block_idx in range(num_blocks):
-            session.generate_block(models)
+            try:
+                session.generate_block(models)
+            except asyncio.CancelledError:
+                break
+                
         
         # Combine all frames
         combined_frames = torch.cat(all_frames, dim=1)
         print(f"✅ Generated {combined_frames.shape[1]} frames")
+        t_end_sampling = time.time()
+        print(f"Sampling took {t_end_sampling - t_start_sampling:.2f}s")
         
         result = {
             "prompt": prompt,
