@@ -1,5 +1,4 @@
 import torch
-import time
 torch.set_grad_enabled(False)
 from safetensors.torch import load_file, save_file
 import safetensors
@@ -44,7 +43,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ValidationError
-import torch
 import time
 from pathlib import Path
 from PIL import Image
@@ -56,6 +54,14 @@ from settings import MODEL_FOLDER
 from wan.modules.vae import WanVAE
 import torch._dynamo as dynamo
 dynamo.config.recompile_limit = 32
+
+# Helper function for resampling frames
+def resample_array(array, target_length):
+    """Resample a list to the target length using linear interpolation of indices"""
+    if len(array) == target_length:
+        return array
+    indices = np.round(np.linspace(0, len(array) - 1, target_length)).astype(int)
+    return [array[i] for i in indices]
 
 # SECTION: CONFIGURATION AND CONSTANTS
 
@@ -329,6 +335,8 @@ class GenerateParams(BaseModel):
     start_frame: bytes | str | None = None
     timestep_shift: float = 5.0
 
+    webcam_mode: bool = False
+    webcam_fps: int = 10
     class Config:
         arbitrary_types_allowed = True
     
@@ -349,7 +357,7 @@ class GenerationSession:
 
 
         self.input_video = params.input_video
-        if self.input_video is None:
+        if self.input_video is None and not params.webcam_mode:
             self.params.strength = 1.0
             
         self.start_frame = params.start_frame
@@ -478,6 +486,46 @@ class GenerationSession:
             print(f"Killing from push_frame: {e}")
             self.dispose()
     
+    def process_webcam_frames(self, models: Models, idx: int):
+        """Process webcam frames for streaming v2v with proper frame encoding"""
+        # Determine number of frames to encode based on block index
+        if idx == 0:
+            num_frames_to_encode = 9
+        else:
+            num_frames_to_encode = 12
+
+        # Wait until we have at least enough frames
+        while self.frame_queue.qsize() < num_frames_to_encode:
+            if self.disposed.is_set():
+                return None
+            time.sleep(0.01)  # Check every 10ms to avoid busy-spinning
+
+        frame_list = []
+        while not self.frame_queue.empty():
+            try:
+                frame_list.append(self.frame_queue.get_nowait())
+            except queue.Empty:
+                break
+
+        if len(frame_list) < num_frames_to_encode:
+            return None
+
+        # Resample to target number of frames for temporal spacing
+        frames_to_encode = resample_array(frame_list, num_frames_to_encode)
+
+        frames_tensor = torch.stack(frames_to_encode)
+
+        latents, self.encode_vae_cache = encode_video_latent(
+            models.vae_encoder,
+            self.encode_vae_cache,
+            frames=frames_tensor,
+            height=self.params.height,
+            width=self.params.width,
+            stream=idx > 0,
+        )
+
+        return latents
+
     @lru_cache(maxsize=32)
     def encode_v2v(self, video_path_or_url: str, max_frames=None, resample_to=None):
         latents = encode_video_latent(self.models.vae_encoder,
@@ -599,9 +647,18 @@ class GenerationSession:
         model_input_start_frame = self.recompute_kv_cache(models)
         assert model_input_start_frame is not None
         frame_ids: list[str | None] = []
-        
-        noisy_input = self.noise[:, self.current_start_frame:self.current_start_frame + models.pipeline.num_frame_per_block]
-        
+
+        if self.params.webcam_mode:
+            latents = self.process_webcam_frames(models, idx)
+            if latents is None:
+                return None
+
+            denoising_strength_scaled = self.denoising_step_list[0] / 1000.0
+            latents = latents[None].to("cuda", dtype=self.noise.dtype).movedim(1, 2)
+            noisy_input = latents * (1.0 - denoising_strength_scaled) + torch.randn_like(latents) * denoising_strength_scaled
+        else:
+            noisy_input = self.noise[:, self.current_start_frame:self.current_start_frame + models.pipeline.num_frame_per_block]
+
         if self.interpolated_prompt_embeds:
             models.pipeline._initialize_crossattn_cache(batch_size=1, dtype=torch.bfloat16, device=self.gpu)
             next_interpolated_text_emb = self.interpolated_prompt_embeds.pop(0)
@@ -961,14 +1018,24 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
 
         new_data_event = asyncio.Event()
         async def generate_loop():
-            while True:
-                try:
-                    await loop.run_in_executor(generate_pool, session.generate_block, models)
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logging.error(f"Error during generation: {e}")
-                    traceback.print_exc()
+            try:
+                while True:
+                    try:
+                        await loop.run_in_executor(generate_pool, session.generate_block, models)
+                    except asyncio.CancelledError:
+                        # Generation completed all blocks
+                        logging.info(f"Generation completed: {session.block_idx}/{session.num_blocks} blocks")
+                        try:
+                            # Only send if websocket is still connected
+                            await websocket.send_json({"session_id": id, "status": "completed"})
+                        except Exception as e:
+                            logging.debug(f"Could not send completion message (websocket likely closed): {e}")
+                        break
+                    except Exception as e:
+                        logging.error(f"Error during generation: {e}")
+                        traceback.print_exc()
+            except Exception as e:
+                logging.error(f"Error in generate_loop: {e}")
         generate_task = loop.create_task(generate_loop())
 
         async for data in websocket.iter_bytes():

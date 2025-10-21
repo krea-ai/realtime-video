@@ -367,8 +367,15 @@
 <body>
     <div class="page">
         <section class="viewer">
-            <div class="video-frame">
-                <canvas id="videoCanvas" width="832" height="480"></canvas>
+            <div id="videoDisplayContainer" style="display: flex; gap: 16px; flex-wrap: wrap;">
+                <div class="video-frame" style="flex: 1; min-width: 300px;">
+                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Generated Output</div>
+                    <canvas id="videoCanvas" width="832" height="480"></canvas>
+                </div>
+                <div id="webcamDisplayContainer" class="video-frame" style="flex: 1; min-width: 300px; display: none;">
+                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Webcam Input</div>
+                    <video id="webcamDisplayPreview" autoplay playsinline style="width: 100%; height: auto; display: block; border-radius: 12px; background: #000;"></video>
+                </div>
             </div>
             <div class="status-strip">
                 <span id="statusLine" class="status-text">Disconnected</span>
@@ -390,6 +397,24 @@
                 </div>
             </div>
 
+            <div class="field">
+                <label>Mode</label>
+                <div style="display: flex; gap: 16px; margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="mode" value="text2video" checked style="width: auto;">
+                        <span>Text-to-Video</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="mode" value="video2video" style="width: auto;">
+                        <span>Video-to-Video</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="mode" value="webcam" style="width: auto;">
+                        <span>Webcam</span>
+                    </label>
+                </div>
+            </div>
+
             <div class="prompt-block">
                 <label for="prompt">Prompt</label>
                 <textarea id="prompt" placeholder="Describe the short video you want to synthesize..."></textarea>
@@ -406,7 +431,7 @@
                 </div>
             </div>
 
-            <div class="field upload-field">
+            <div class="field upload-field" id="videoUploadContainer">
                 <div class="upload-label">
                     <label for="inputVideo">Input Video (optional)</label>
                     <button id="clearVideoBtn" class="clear-upload-btn" style="display: none;" type="button">Clear</button>
@@ -418,11 +443,22 @@
                 </div>
             </div>
 
+            <div class="field" id="webcamContainer" style="display: none;">
+                <video id="webcamPreview" autoplay playsinline style="display: none;"></video>
+                <div class="slider-field">
+                    <label for="webcamFps">Webcam Capture FPS</label>
+                    <div class="slider-row">
+                        <input id="webcamFps" type="range" min="1" max="30" value="30">
+                        <span id="webcamFpsValue" class="slider-value">30</span>
+                    </div>
+                </div>
+            </div>
+
             <div id="denoisingStrengthContainer" class="field slider-field" style="display: none;">
                 <label for="denoisingStrength">Denoising Strength</label>
                 <div class="slider-row">
-                    <input id="denoisingStrength" type="range" min="0.4" max="1.0" step="0.05" value="1.0">
-                    <span id="denoisingStrengthValue" class="slider-value">1.0</span>
+                    <input id="denoisingStrength" type="range" min="0.0" max="1.0" step="0.05" value="0.8">
+                    <span id="denoisingStrengthValue" class="slider-value">0.80</span>
                 </div>
             </div>
 
@@ -673,6 +709,26 @@
             const numDenoisingStepsInput = document.getElementById("numDenoisingSteps");
             const numDenoisingStepsValue = document.getElementById("numDenoisingStepsValue");
 
+            // Webcam elements
+            const modeRadios = document.querySelectorAll('input[name="mode"]');
+            const webcamContainer = document.getElementById("webcamContainer");
+            const videoUploadContainer = document.getElementById("videoUploadContainer");
+            const startFrameContainer = document.querySelector('.upload-field:has(#startFrame)');
+            const webcamPreview = document.getElementById("webcamPreview");
+            const webcamDisplayPreview = document.getElementById("webcamDisplayPreview");
+            const webcamDisplayContainer = document.getElementById("webcamDisplayContainer");
+            const webcamFpsInput = document.getElementById("webcamFps");
+            const webcamFpsValue = document.getElementById("webcamFpsValue");
+
+            let webcamStream = null;
+            let webcamCaptureInterval = null;
+            let currentMode = 'text2video';
+
+            // FPS tracking
+            let fpsFrameCount = 0;
+            let fpsLastTime = Date.now();
+            let currentFps = 0;
+
             const setText = (element, value) => {
                 if (element) {
                     element.textContent = value;
@@ -740,6 +796,9 @@
                 const value = Number(denoisingStrengthInput.value).toFixed(2);
                 setText(denoisingStrengthValue, value);
             });
+
+            // Initialize denoising strength display
+            setText(denoisingStrengthValue, Number(denoisingStrengthInput.value).toFixed(2));
             timestepShiftInput.addEventListener("input", () => {
                 const value = Number(timestepShiftInput.value).toFixed(2);
                 setText(timestepShiftValue, value);
@@ -752,7 +811,150 @@
                 const value = String(Number(numDenoisingStepsInput.value) || 6);
                 setText(numDenoisingStepsValue, value);
             });
-            
+
+            webcamFpsInput.addEventListener("input", () => {
+                const value = String(Number(webcamFpsInput.value) || 4);
+                setText(webcamFpsValue, value);
+            });
+
+            // Mode switching logic
+            modeRadios.forEach(radio => {
+                radio.addEventListener("change", (e) => {
+                    currentMode = e.target.value;
+                    updateUIForMode();
+                });
+            });
+
+            function updateUIForMode() {
+                if (currentMode === 'webcam') {
+                    webcamContainer.style.display = 'block';
+                    webcamDisplayContainer.style.display = 'block';
+                    videoUploadContainer.style.display = 'none';
+                    if (startFrameContainer) startFrameContainer.style.display = 'none';
+                    denoisingStrengthContainer.style.display = 'flex';
+                    // Auto-start webcam when switching to webcam mode
+                    if (!webcamStream) {
+                        startWebcam();
+                    }
+                } else {
+                    // Stop webcam when switching away from webcam mode
+                    if (webcamStream) {
+                        stopWebcam();
+                    }
+                    webcamContainer.style.display = 'none';
+                    webcamDisplayContainer.style.display = 'none';
+                    videoUploadContainer.style.display = 'block';
+                    if (startFrameContainer) startFrameContainer.style.display = 'block';
+                    if (currentMode === 'video2video' && uploadedVideoPath) {
+                        denoisingStrengthContainer.style.display = 'flex';
+                    } else if (currentMode === 'text2video') {
+                        denoisingStrengthContainer.style.display = 'none';
+                    }
+                }
+            }
+
+            // Webcam control functions
+            async function startWebcam() {
+                try {
+                    webcamStream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            width: { ideal: 832 },
+                            height: { ideal: 480 }
+                        }
+                    });
+                    // Set stream for both the hidden capture element and the visible display
+                    webcamPreview.srcObject = webcamStream;
+                    webcamDisplayPreview.srcObject = webcamStream;
+                    log("Webcam started");
+                } catch (error) {
+                    console.error("Error accessing webcam:", error);
+                    updateStatus("Failed to access webcam: " + error.message);
+                }
+            }
+
+            function stopWebcam() {
+                if (webcamStream) {
+                    webcamStream.getTracks().forEach(track => track.stop());
+                    webcamStream = null;
+                    webcamPreview.srcObject = null;
+                    webcamDisplayPreview.srcObject = null;
+                }
+                if (webcamCaptureInterval) {
+                    clearInterval(webcamCaptureInterval);
+                    webcamCaptureInterval = null;
+                }
+                log("Webcam stopped");
+            }
+
+            function captureWebcamFrame() {
+                if (!webcamStream || !websocket || websocket.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+
+                // Create a canvas to capture the frame
+                const canvas = document.createElement('canvas');
+                const targetWidth = Math.round(Number(widthInput.value) / 8) * 8;
+                const targetHeight = Math.round(Number(heightInput.value) / 8) * 8;
+                canvas.width = targetWidth;
+                canvas.height = targetHeight;
+                const ctx = canvas.getContext('2d');
+
+                // Calculate center crop from webcam preview
+                const videoWidth = webcamPreview.videoWidth;
+                const videoHeight = webcamPreview.videoHeight;
+                const videoAspect = videoWidth / videoHeight;
+                const targetAspect = targetWidth / targetHeight;
+
+                let sx, sy, sWidth, sHeight;
+
+                if (videoAspect > targetAspect) {
+                    // Video is wider - crop sides
+                    sHeight = videoHeight;
+                    sWidth = videoHeight * targetAspect;
+                    sx = (videoWidth - sWidth) / 2;
+                    sy = 0;
+                } else {
+                    // Video is taller - crop top/bottom
+                    sWidth = videoWidth;
+                    sHeight = videoWidth / targetAspect;
+                    sx = 0;
+                    sy = (videoHeight - sHeight) / 2;
+                }
+
+                // Draw center-cropped video frame to canvas
+                ctx.drawImage(webcamPreview, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
+
+                // Convert to base64 JPEG
+                canvas.toBlob((blob) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64data = reader.result.split(',')[1];
+
+                        // Send frame via WebSocket
+                        const payload = {
+                            image: base64data,
+                            timestamp: Date.now(),
+                            strength: Number(denoisingStrengthInput.value)
+                        };
+
+                        try {
+                            const encoderCandidate =
+                                (window.msgpack && typeof window.msgpack.encode === "function" && ((value) => window.msgpack.encode(value))) ||
+                                (window.MessagePack && typeof window.MessagePack.encode === "function" && ((value) => window.MessagePack.encode(value))) ||
+                                builtinMsgPackEncode;
+                            const encoded = encoderCandidate(payload);
+                            const payloadBuffer = encoded instanceof Uint8Array
+                                ? encoded
+                                : new Uint8Array(encoded.buffer ? encoded.buffer : encoded);
+                            websocket.send(payloadBuffer);
+                        } catch (error) {
+                            console.error("Failed to send webcam frame", error);
+                        }
+                    };
+                    reader.readAsDataURL(blob);
+                }, 'image/jpeg', 0.90);
+            }
+
             startFrameInput.addEventListener("change", async () => {
                 const file = startFrameInput.files[0];
                 if (!file) {
@@ -888,6 +1090,17 @@
                 if (bitmap.close) {
                     bitmap.close();
                 }
+
+                // Update FPS meter
+                fpsFrameCount++;
+                const now = Date.now();
+                const elapsed = now - fpsLastTime;
+                if (elapsed >= 1000) {
+                    currentFps = (fpsFrameCount / elapsed * 1000).toFixed(1);
+                    console.log(`Generation FPS: ${currentFps}`);
+                    fpsFrameCount = 0;
+                    fpsLastTime = now;
+                }
             };
 
             const downloadVideo = async () => {
@@ -979,6 +1192,16 @@
                     closeSocket("missing prompt");
                     return;
                 }
+
+                // Webcam mode validation
+                if (currentMode === 'webcam' && !webcamStream) {
+                    updateStatus("Please start the webcam before generating.");
+                    setButtons(false);
+                    stopPlaybackLoop();
+                    closeSocket("webcam not started");
+                    return;
+                }
+
                 const width = Math.max(64, Math.round(Number(widthInput.value) / 8) * 8);
                 const height = Math.max(64, Math.round(Number(heightInput.value) / 8) * 8);
                 widthInput.value = width;
@@ -994,15 +1217,33 @@
                 };
                 syncNumBlocksDisplay(payload.num_blocks);
 
-                // Include uploaded video path if available
-                if (uploadedVideoPath) {
-                    payload.input_video = uploadedVideoPath;
+                // Webcam mode
+                if (currentMode === 'webcam') {
+                    payload.webcam_mode = true;
+                    payload.webcam_fps = Number(webcamFpsInput.value);
                     payload.strength = Number(denoisingStrengthInput.value);
-                }
 
-                // Include uploaded start frame path if available
-                if (uploadedStartFramePath) {
-                    payload.start_frame = uploadedStartFramePath;
+                    // Start capturing and sending webcam frames
+                    const webcamFps = Number(webcamFpsInput.value);
+                    // Always clear any existing interval first
+                    if (webcamCaptureInterval) {
+                        clearInterval(webcamCaptureInterval);
+                        webcamCaptureInterval = null;
+                        log("Cleared existing webcam capture interval");
+                    }
+                    webcamCaptureInterval = setInterval(captureWebcamFrame, 1000 / webcamFps);
+                    log("Started webcam capture at " + webcamFps + " fps (interval ID: " + webcamCaptureInterval + ")");
+                } else {
+                    // Include uploaded video path if available
+                    if (uploadedVideoPath) {
+                        payload.input_video = uploadedVideoPath;
+                        payload.strength = Number(denoisingStrengthInput.value);
+                    }
+
+                    // Include uploaded start frame path if available
+                    if (uploadedStartFramePath) {
+                        payload.start_frame = uploadedStartFramePath;
+                    }
                 }
 
                 const rawSeed = seedInput.value.trim();
@@ -1019,6 +1260,10 @@
                 playbackFps = Number(playbackSlider.value) || 8;
                 setText(playbackValue, String(playbackFps));
                 startPlaybackLoop();
+
+                fpsFrameCount = 0;
+                fpsLastTime = Date.now();
+                currentFps = 0;
 
                 try {
                     const encoderCandidate =
@@ -1079,8 +1324,19 @@
                                 }
                                 enableDownload(true);
                                 updateStatus("Generation completed. Video ready to download.");
+
+                                // Stop webcam capture if in webcam mode
+                                if (currentMode === 'webcam' && webcamCaptureInterval) {
+                                    clearInterval(webcamCaptureInterval);
+                                    webcamCaptureInterval = null;
+                                    log("Webcam capture stopped (generation completed)");
+                                }
+
+                                // Re-enable Start button for new generation, disable Stop
+                                setButtons(false);
                             } else if (message.error) {
                                 updateStatus("Server error: " + message.error);
+                                setButtons(false);
                             } else if (typeof message.status === "string") {
                                 updateStatus(message.status);
                             }
@@ -1155,6 +1411,14 @@
                 closeSocket("stopped by user");
                 setButtons(false);
                 stopPlaybackLoop();
+
+                // Stop webcam capture if running
+                if (webcamCaptureInterval) {
+                    clearInterval(webcamCaptureInterval);
+                    webcamCaptureInterval = null;
+                    log("Stopped webcam capture");
+                }
+
                 // Enable download button after stop
                 if (currentSessionId) {
                     enableDownload(true);
