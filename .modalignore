@@ -1,0 +1,41 @@
+# Ignore unnecessary files for Modal deployment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.dylib
+*.egg-info/
+dist/
+build/
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Environment
+.env
+.venv
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Models (we download these in Modal)
+wan_models/
+checkpoints/
+outputs/
+
+# Misc
+.DS_Store

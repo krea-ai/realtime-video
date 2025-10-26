@@ -27,10 +27,23 @@ class WanTextEncoder(torch.nn.Module):
             dtype=torch.float32,
             device=torch.device('cuda')
         ).eval().requires_grad_(False)
-        self.text_encoder.load_state_dict(
-            safe_load_file(os.path.join(MODEL_FOLDER, "Wan2.1-T2V-1.3B", "models_t5_umt5-xxl-enc-bf16.safetensors"),
-                       device='cuda')
-        )
+        # Load T5 encoder weights (handle both .pth and .safetensors formats)
+        t5_base = os.path.join(MODEL_FOLDER, "Wan2.1-T2V-1.3B", "models_t5_umt5-xxl-enc-bf16")
+        t5_pth = t5_base + ".pth"
+        t5_safetensors = t5_base + ".safetensors"
+
+        if os.path.exists(t5_safetensors):
+            # Use safetensors if available (safer, faster)
+            self.text_encoder.load_state_dict(
+                safe_load_file(t5_safetensors, device='cuda')
+            )
+        elif os.path.exists(t5_pth):
+            # Fallback to .pth format
+            self.text_encoder.load_state_dict(
+                torch.load(t5_pth, map_location='cuda', weights_only=True)  # weights_only for security
+            )
+        else:
+            raise FileNotFoundError(f"T5 model not found at {t5_safetensors} or {t5_pth}")
 
         self.tokenizer = HuggingfaceTokenizer(
             name=os.path.join(MODEL_FOLDER, "Wan2.1-T2V-1.3B", "google", "umt5-xxl/"), seq_len=512, clean='whitespace')
@@ -136,9 +149,9 @@ class WanDiffusionWrapper(torch.nn.Module):
         with torch.device("meta") if meta_init else nullcontext():
             if is_causal:
                 self.model = CausalWanModel.from_pretrained(
-                    model_path, local_attn_size=local_attn_size, sink_size=sink_size)
+                    model_path, local_attn_size=local_attn_size, sink_size=sink_size, local_files_only=True)
             else:
-                self.model = WanModel.from_pretrained(model_path)
+                self.model = WanModel.from_pretrained(model_path, local_files_only=True)
         self.model.eval()
 
         # For non-causal diffusion, all frames share the same timestep
