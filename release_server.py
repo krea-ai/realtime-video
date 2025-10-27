@@ -1,5 +1,4 @@
 import torch
-import time
 torch.set_grad_enabled(False)
 from safetensors.torch import load_file, save_file
 import safetensors
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
 # Internal / self-forcing imports
 from v2v import encode_video_latent, get_denoising_schedule
 from utils.misc import AtomicCounter
+from background_removal import get_background_removal_processor
 
 # External imports
 from omegaconf import OmegaConf
@@ -44,7 +44,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ValidationError
-import torch
 import time
 from pathlib import Path
 from PIL import Image
@@ -55,7 +54,19 @@ from msgpack import packb, unpackb
 from settings import MODEL_FOLDER
 from wan.modules.vae import WanVAE
 import torch._dynamo as dynamo
-dynamo.config.recompile_limit = 32
+# Set recompile limit if available (API changed in newer PyTorch versions)
+try:
+    dynamo.config.recompile_limit = 32
+except (AttributeError, RuntimeError):
+    pass  # Ignore if not available in this PyTorch version
+
+# Helper function for resampling frames
+def resample_array(array, target_length):
+    """Resample a list to the target length using linear interpolation of indices"""
+    if len(array) == target_length:
+        return array
+    indices = np.round(np.linspace(0, len(array) - 1, target_length)).astype(int)
+    return [array[i] for i in indices]
 
 # SECTION: CONFIGURATION AND CONSTANTS
 
@@ -146,12 +157,26 @@ def load_transformer(config, meta_transformer=False):
     t_start = time.time()
 
     checkpoint_path = config.checkpoint_path
-    
+
     from utils.wan_wrapper import WanDiffusionWrapper
     t_import = time.time()
     log.debug(f"Transformer import took: {t_import - t_start:.2f}s")
-    
-    state_dict = load_file(checkpoint_path, device="cuda")
+
+    # Load checkpoint - handle both .safetensors and .pt formats
+    if checkpoint_path.endswith('.safetensors'):
+        state_dict = load_file(checkpoint_path, device="cuda")
+    else:
+        # .pt file - may contain EMA wrapper
+        checkpoint = torch.load(checkpoint_path, map_location="cuda", weights_only=False)
+        if "generator_ema" in checkpoint:
+            # Extract model from EMA wrapper (Self-Forcing checkpoints)
+            log.info("Loading model from EMA wrapper")
+            state_dict = checkpoint["generator_ema"]
+        elif "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        else:
+            state_dict = checkpoint
+
     log.debug(f"Loading transformer state dict from {checkpoint_path}")
     if state_dict["model.blocks.0.self_attn.k.weight"].shape[0] == 1536:
         model_name = "Wan2.1-T2V-1.3B"
@@ -310,7 +335,7 @@ class GenerateParams(BaseModel):
     prompt: str
     width: int = 832
     height: int = 480
-    
+
     seed: int | None = None
     resume_latents: bytes | None = None
     strength: float = 1.0
@@ -329,6 +354,15 @@ class GenerateParams(BaseModel):
     start_frame: bytes | str | None = None
     timestep_shift: float = 5.0
 
+    webcam_mode: bool = False
+    webcam_fps: int = 10
+    remove_background: bool = False  # Server-side background removal flag
+    horizontal_mirror: bool = False  # Horizontal mirror flag
+    drop_frames: bool = True  # Drop old frames to prevent lag
+    max_queue_multiplier: float = 2.0  # Max queue size multiplier (e.g., 2.0 = 2x needed frames)
+
+    mode: str = "text2video"  # Mode: text2video, video2video, webcam
+    model: str = "14b"  # Model: 14b or 1.3b
     class Config:
         arbitrary_types_allowed = True
     
@@ -349,7 +383,7 @@ class GenerationSession:
 
 
         self.input_video = params.input_video
-        if self.input_video is None:
+        if self.input_video is None and not params.webcam_mode:
             self.params.strength = 1.0
             
         self.start_frame = params.start_frame
@@ -468,6 +502,20 @@ class GenerationSession:
                     frame = frame[frame.index(",") + 1:]
                 frame = base64.b64decode(frame)
             image = Image.open(BytesIO(frame)).convert("RGB")
+
+            # Apply server-side background removal if enabled
+            if self.params.remove_background:
+                try:
+                    processor = get_background_removal_processor("yolov8n-seg", device="cuda")
+                    if processor:
+                        image = processor.remove_background(image, bg_color=(0, 0, 0), confidence=0.5)
+                except Exception as e:
+                    log.warning(f"Background removal failed: {e}. Using original frame.")
+
+            # Apply horizontal mirror if enabled
+            if self.params.horizontal_mirror:
+                image = image.transpose(Image.FLIP_LEFT_RIGHT)
+
             tensor = TF.to_tensor(image).to(dtype=torch.float16).pin_memory()
             with torch.cuda.stream(upload_stream):
                 tensor = tensor.to(self.gpu).sub_(0.5).mul_(2.0)
@@ -478,6 +526,57 @@ class GenerationSession:
             print(f"Killing from push_frame: {e}")
             self.dispose()
     
+    def process_webcam_frames(self, models: Models, idx: int):
+        """Process webcam frames for streaming v2v with proper frame encoding"""
+        # Determine number of frames to encode based on block index
+        if idx == 0:
+            num_frames_to_encode = 9
+        else:
+            num_frames_to_encode = 12
+
+        # Wait until we have at least enough frames
+        while self.frame_queue.qsize() < num_frames_to_encode:
+            if self.disposed.is_set():
+                return None
+            time.sleep(0.01)  # Check every 10ms to avoid busy-spinning
+
+        # Drain entire queue to get all available frames
+        frame_list = []
+        while not self.frame_queue.empty():
+            try:
+                frame_list.append(self.frame_queue.get_nowait())
+            except queue.Empty:
+                break
+
+        if len(frame_list) < num_frames_to_encode:
+            return None
+
+        # IMPORTANT: Only use the most recent frames to prevent lag buildup
+        # If we have more frames than needed, drop the oldest ones (if enabled)
+        if self.params.drop_frames:
+            max_frames = int(num_frames_to_encode * self.params.max_queue_multiplier)
+            if len(frame_list) > max_frames:
+                # Keep only the most recent frames
+                dropped_count = len(frame_list) - max_frames
+                log.info(f"Dropping {dropped_count} old frames to prevent lag (queue size was {len(frame_list)}, max={max_frames})")
+                frame_list = frame_list[-max_frames:]
+
+        # Resample to target number of frames for temporal spacing
+        frames_to_encode = resample_array(frame_list, num_frames_to_encode)
+
+        frames_tensor = torch.stack(frames_to_encode)
+
+        latents, self.encode_vae_cache = encode_video_latent(
+            models.vae_encoder,
+            self.encode_vae_cache,
+            frames=frames_tensor,
+            height=self.params.height,
+            width=self.params.width,
+            stream=idx > 0,
+        )
+
+        return latents
+
     @lru_cache(maxsize=32)
     def encode_v2v(self, video_path_or_url: str, max_frames=None, resample_to=None):
         latents = encode_video_latent(self.models.vae_encoder,
@@ -599,9 +698,18 @@ class GenerationSession:
         model_input_start_frame = self.recompute_kv_cache(models)
         assert model_input_start_frame is not None
         frame_ids: list[str | None] = []
-        
-        noisy_input = self.noise[:, self.current_start_frame:self.current_start_frame + models.pipeline.num_frame_per_block]
-        
+
+        if self.params.webcam_mode:
+            latents = self.process_webcam_frames(models, idx)
+            if latents is None:
+                return None
+
+            denoising_strength_scaled = self.denoising_step_list[0] / 1000.0
+            latents = latents[None].to("cuda", dtype=self.noise.dtype).movedim(1, 2)
+            noisy_input = latents * (1.0 - denoising_strength_scaled) + torch.randn_like(latents) * denoising_strength_scaled
+        else:
+            noisy_input = self.noise[:, self.current_start_frame:self.current_start_frame + models.pipeline.num_frame_per_block]
+
         if self.interpolated_prompt_embeds:
             models.pipeline._initialize_crossattn_cache(batch_size=1, dtype=torch.bfloat16, device=self.gpu)
             next_interpolated_text_emb = self.interpolated_prompt_embeds.pop(0)
@@ -694,8 +802,44 @@ class GenerationSession:
         return id(self)
 
 def compile_models(models: Models):
-    models.vae_decoder = torch.compile(models.vae_decoder, fullgraph=True,) 
+    models.vae_decoder = torch.compile(models.vae_decoder, fullgraph=True,)
     models.transformer = torch.compile(models.transformer)
+
+# Model switching state
+_model_lock = threading.Lock()
+_current_model = "14b"
+
+def get_model_config_path(model: str) -> str:
+    """Get config path for a model version"""
+    if model == "1.3b":
+        return "configs/self_forcing_server.yaml"
+    else:
+        return "configs/self_forcing_server_14b.yaml"
+
+def ensure_model_loaded(app: FastAPI, model: str):
+    """Ensure the requested model is loaded, switching if necessary"""
+    global _current_model
+
+    if _current_model == model:
+        return  # Already loaded
+
+    with _model_lock:
+        # Double-check after acquiring lock
+        if _current_model == model:
+            return
+
+        # Unload current model to free GPU memory
+        log.info(f"Unloading model {_current_model}")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # Load new model
+        config_path = get_model_config_path(model)
+        log.info(f"Loading model {model} from {config_path}")
+        app.state.config = load_merge_config(config_path)
+        app.state.models = load_all(app.state.config)
+        _current_model = model
+        log.info(f"Model {model} loaded successfully")
 
 # SECTION - SERVER & HANDLING
 async def lifespan(app: FastAPI):
@@ -879,6 +1023,12 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
             except ValidationError as e:
                 await websocket.send_json({"error": e.errors()})
                 continue
+        # Log model and mode selection
+        log.info(f"Session {id}: Model={params.model}, Mode={params.mode}")
+
+        # Ensure requested model is loaded (switches models if necessary)
+        ensure_model_loaded(app, params.model)
+
         params.block_on_frame = True
         if params.seed is None:
             params.seed = random.randint(0, 2**24 - 1)
@@ -961,14 +1111,24 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
 
         new_data_event = asyncio.Event()
         async def generate_loop():
-            while True:
-                try:
-                    await loop.run_in_executor(generate_pool, session.generate_block, models)
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logging.error(f"Error during generation: {e}")
-                    traceback.print_exc()
+            try:
+                while True:
+                    try:
+                        await loop.run_in_executor(generate_pool, session.generate_block, models)
+                    except asyncio.CancelledError:
+                        # Generation completed all blocks
+                        logging.info(f"Generation completed: {session.block_idx}/{session.num_blocks} blocks")
+                        try:
+                            # Only send if websocket is still connected
+                            await websocket.send_json({"session_id": id, "status": "completed"})
+                        except Exception as e:
+                            logging.debug(f"Could not send completion message (websocket likely closed): {e}")
+                        break
+                    except Exception as e:
+                        logging.error(f"Error during generation: {e}")
+                        traceback.print_exc()
+            except Exception as e:
+                logging.error(f"Error in generate_loop: {e}")
         generate_task = loop.create_task(generate_loop())
 
         async for data in websocket.iter_bytes():

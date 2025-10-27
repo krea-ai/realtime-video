@@ -8,16 +8,22 @@ try:
         if not torch.cuda.is_available():
             return False
         device_name = torch.cuda.get_device_name(0).lower()
-        return "h100" in device_name or "hopper" in device_name
+        # Include B200 (Blackwell) which also benefits from Hopper-optimized path
+        return "h100" in device_name or "hopper" in device_name or "b200" in device_name or "blackwell" in device_name
     FLASH_ATTN_3_AVAILABLE = is_hopper_gpu()
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     FLASH_ATTN_3_AVAILABLE = False
+    flash_attn_func = None
 
 try:
+    # Try Flash Attn 2.x import if Flash Attn 3 import failed
+    if flash_attn_func is None:
+        from flash_attn.flash_attn_interface import flash_attn_func
     import flash_attn
     FLASH_ATTN_2_AVAILABLE = True
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     FLASH_ATTN_2_AVAILABLE = False
+    flash_attn_func = None
 
 from .sage import sageattn_func, SAGEATTN_AVAILABLE
 

@@ -21,3 +21,6 @@ scratch
 traces
 profiler_log
 profiler_traces
+
+# Local configuration (personal workspace info)
+LOCAL.md

@@ -367,8 +367,32 @@
 <body>
     <div class="page">
         <section class="viewer">
-            <div class="video-frame">
-                <canvas id="videoCanvas" width="832" height="480"></canvas>
+            <div id="videoDisplayContainer" style="display: flex; gap: 16px; flex-wrap: wrap;">
+                <div class="video-frame" style="flex: 1; min-width: 300px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <div style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Generated Output</div>
+                        <div style="display: flex; gap: 12px; align-items: center;">
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px;">
+                                <input type="checkbox" id="fillScreenToggle" style="width: auto;">
+                                <span>Fill Screen</span>
+                            </label>
+                            <button id="browserFullscreenBtn" style="padding: 6px 12px; font-size: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-primary);">⛶ Fullscreen</button>
+                            <button id="rotateViewLeftBtn" style="padding: 6px 12px; font-size: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-primary);" title="Rotate View Left">VL</button>
+                            <button id="rotateViewRightBtn" style="padding: 6px 12px; font-size: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-primary);" title="Rotate View Right">VR</button>
+                            <button id="rotateContentLeftBtn" style="padding: 6px 12px; font-size: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-primary);" title="Rotate Content Left">CL</button>
+                            <button id="rotateContentRightBtn" style="padding: 6px 12px; font-size: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-primary);" title="Rotate Content Right">CR</button>
+                        </div>
+                    </div>
+                    <div id="canvasContainer" style="display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 16/9; border-radius: 12px; overflow: hidden; background: #000; position: relative; transition: transform 0.3s ease;">
+                        <div id="canvasWrapper" style="transform-origin: center; cursor: pointer; width: 100%;">
+                            <canvas id="videoCanvas" width="832" height="480" style="width: 100%; height: auto; display: block; transition: transform 0.3s ease;"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div id="webcamDisplayContainer" class="video-frame" style="flex: 1; min-width: 300px; display: none;">
+                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Webcam Input</div>
+                    <video id="webcamDisplayPreview" autoplay playsinline style="width: 100%; height: auto; display: block; border-radius: 12px; background: #000;"></video>
+                </div>
             </div>
             <div class="status-strip">
                 <span id="statusLine" class="status-text">Disconnected</span>
@@ -390,6 +414,39 @@
                 </div>
             </div>
 
+            <div class="field">
+                <label>Model</label>
+                <div style="display: flex; gap: 16px; margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="model" value="14b" checked style="width: auto;">
+                        <span>14B (Krea Realtime) - 11 fps, best quality</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="model" value="1.3b" style="width: auto;">
+                        <span>1.3B (Self-Forcing) - faster, lower quality</span>
+                    </label>
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">💡 Switch models between generations. Server will reload the new model on next start.</div>
+            </div>
+
+            <div class="field">
+                <label>Mode</label>
+                <div style="display: flex; gap: 16px; margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="mode" value="text2video" checked style="width: auto;">
+                        <span>Text-to-Video</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="mode" value="video2video" style="width: auto;">
+                        <span>Video-to-Video</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="mode" value="webcam" style="width: auto;">
+                        <span>Webcam</span>
+                    </label>
+                </div>
+            </div>
+
             <div class="prompt-block">
                 <label for="prompt">Prompt</label>
                 <textarea id="prompt" placeholder="Describe the short video you want to synthesize..."></textarea>
@@ -398,7 +455,7 @@
             <div class="action-row">
                 <div class="slider-block">
                     <label for="interpSteps">Blend Steps</label>
-                    <input id="interpSteps" type="range" min="1" max="16" value="4">
+                    <input id="interpSteps" type="range" min="1" max="16" value="6">
                     <span id="interpStepsValue" class="slider-value">4</span>
                 </div>
                 <div class="button-row">
@@ -406,7 +463,7 @@
                 </div>
             </div>
 
-            <div class="field upload-field">
+            <div class="field upload-field" id="videoUploadContainer">
                 <div class="upload-label">
                     <label for="inputVideo">Input Video (optional)</label>
                     <button id="clearVideoBtn" class="clear-upload-btn" style="display: none;" type="button">Clear</button>
@@ -418,11 +475,54 @@
                 </div>
             </div>
 
+            <div class="field" id="webcamContainer" style="display: none;">
+                <video id="webcamPreview" autoplay playsinline style="display: none;"></video>
+                <div class="field" style="margin-bottom: 16px;">
+                    <label for="webcamSelector">Camera</label>
+                    <select id="webcamSelector" style="width: 100%; padding: 8px; background: var(--surface); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; font-family: inherit;">
+                        <option value="">Loading cameras...</option>
+                    </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="bgRemovalToggle" style="width: auto;">
+                        <span>Remove Background (Server-Side RF-DETR)</span>
+                    </label>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="horizontalMirrorToggle" style="width: auto;" checked>
+                        <span>Horizontal Mirror</span>
+                    </label>
+                </div>
+                <div class="slider-field">
+                    <label for="webcamFps">Webcam Capture FPS</label>
+                    <div class="slider-row">
+                        <input id="webcamFps" type="range" min="1" max="30" value="8">
+                        <span id="webcamFpsValue" class="slider-value">8</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 16px; margin-bottom: 16px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="dropFramesToggle" style="width: auto;" checked>
+                        <span>Drop Old Frames (Prevent Lag)</span>
+                    </label>
+                </div>
+                <div class="slider-field">
+                    <label for="maxQueueMultiplier">Max Queue Size (×needed)</label>
+                    <div class="slider-row">
+                        <input id="maxQueueMultiplier" type="range" min="1" max="5" step="0.5" value="2">
+                        <span id="maxQueueMultiplierValue" class="slider-value">2</span>
+                    </div>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Lower = less lag, higher = smoother</div>
+                </div>
+            </div>
+
             <div id="denoisingStrengthContainer" class="field slider-field" style="display: none;">
                 <label for="denoisingStrength">Denoising Strength</label>
                 <div class="slider-row">
-                    <input id="denoisingStrength" type="range" min="0.4" max="1.0" step="0.05" value="1.0">
-                    <span id="denoisingStrengthValue" class="slider-value">1.0</span>
+                    <input id="denoisingStrength" type="range" min="0.0" max="1.0" step="0.05" value="0.45">
+                    <span id="denoisingStrengthValue" class="slider-value">0.55</span>
                 </div>
             </div>
 
@@ -441,11 +541,15 @@
             <div class="param-grid">
                 <div class="field">
                     <label for="width">Width (pixels)</label>
-                    <input id="width" type="number" min="64" step="8" value="832">
+                    <input id="width" type="number" min="480" max="832" step="8" value="832">
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">832×480 or 480×832</div>
                 </div>
                 <div class="field">
                     <label for="height">Height (pixels)</label>
-                    <input id="height" type="number" min="64" step="8" value="480">
+                    <input id="height" type="number" min="480" max="832" step="8" value="480">
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                        <button id="flipOrientationBtn" type="button" style="padding: 4px 12px; font-size: 11px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer;">🔄 Flip to Portrait</button>
+                    </div>
                 </div>
                 <div class="field">
                     <label for="seed">Seed (optional)</label>
@@ -457,8 +561,8 @@
                 <div class="field slider-field">
                     <label for="numBlocks">Number of Blocks</label>
                     <div class="slider-row">
-                        <input id="numBlocks" type="range" min="1" max="32" value="9">
-                        <span id="numBlocksValue" class="slider-value">9</span>
+                        <input id="numBlocks" type="range" min="1" max="10000" value="813">
+                        <span id="numBlocksValue" class="slider-value">10</span>
                     </div>
                 </div>
                 <div class="field slider-field">
@@ -479,8 +583,7 @@
 </section>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/msgpack-lite/0.1.26/msgpack.min.js" integrity="sha512-ybfpeTdBPWgkSggCDzKHFOKRSjp6tYmddGdeSGcDGMtXJ632htiE/n9ceJ70KzOPMUYtI14jOgx06FG0jFbh/Q==" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@msgpack/msgpack@2.8.0/dist/msgpack.min.js" integrity="sha384-yVS19QlZIgJsCm2oAChAG0sEUcWRuIIs3y+jz3+bM5DN+JVpn2pDaE6AubutzIth" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@msgpack/msgpack@2.8.0/dist.es5+umd/msgpack.min.js"></script>
     <script>
         (function () {
             const builtinMsgPackEncode = (() => {
@@ -640,6 +743,53 @@
             const widthInput = document.getElementById("width");
             const heightInput = document.getElementById("height");
             const seedInput = document.getElementById("seed");
+
+            // Support 832x480 (landscape) and 480x832 (portrait)
+            const forceResolution = () => {
+                const w = Number(widthInput.value);
+                const h = Number(heightInput.value);
+                const isLandscape = (w === 832 && h === 480);
+                const isPortrait = (w === 480 && h === 832);
+
+                if (!isLandscape && !isPortrait) {
+                    log("⚠ Only 832×480 (landscape) or 480×832 (portrait) is supported. Resetting to 832×480.");
+                    widthInput.value = 832;
+                    heightInput.value = 480;
+                    widthInput.style.borderColor = "#ff6b6b";
+                    heightInput.style.borderColor = "#ff6b6b";
+                    setTimeout(() => {
+                        widthInput.style.borderColor = "";
+                        heightInput.style.borderColor = "";
+                    }, 2000);
+                }
+            };
+
+            widthInput.addEventListener("change", forceResolution);
+            heightInput.addEventListener("change", forceResolution);
+
+            // Flip orientation button
+            const flipOrientationBtn = document.getElementById("flipOrientationBtn");
+            flipOrientationBtn.addEventListener("click", () => {
+                const currentWidth = Number(widthInput.value);
+                const currentHeight = Number(heightInput.value);
+
+                // Swap width and height
+                widthInput.value = currentHeight;
+                heightInput.value = currentWidth;
+
+                // Update button text
+                if (currentWidth === 832 && currentHeight === 480) {
+                    flipOrientationBtn.textContent = "🔄 Flip to Landscape";
+                    log("Switched to portrait mode (480×832)");
+                } else {
+                    flipOrientationBtn.textContent = "🔄 Flip to Portrait";
+                    log("Switched to landscape mode (832×480)");
+                }
+
+                // Update canvas dimensions
+                videoCanvas.width = Number(widthInput.value);
+                videoCanvas.height = Number(heightInput.value);
+            });
             const numBlocksInput = document.getElementById("numBlocks");
             const numBlocksValue = document.getElementById("numBlocksValue");
             const numBlocksStatusValue = document.getElementById("numBlocksStatusValue");
@@ -672,6 +822,34 @@
             const interpStepsValue = document.getElementById("interpStepsValue");
             const numDenoisingStepsInput = document.getElementById("numDenoisingSteps");
             const numDenoisingStepsValue = document.getElementById("numDenoisingStepsValue");
+
+            // Webcam elements
+            const modeRadios = document.querySelectorAll('input[name="mode"]');
+            const webcamContainer = document.getElementById("webcamContainer");
+            const videoUploadContainer = document.getElementById("videoUploadContainer");
+            const startFrameContainer = document.querySelector('.upload-field:has(#startFrame)');
+            const webcamPreview = document.getElementById("webcamPreview");
+            const webcamDisplayPreview = document.getElementById("webcamDisplayPreview");
+            const webcamDisplayContainer = document.getElementById("webcamDisplayContainer");
+            const webcamFpsInput = document.getElementById("webcamFps");
+            const webcamFpsValue = document.getElementById("webcamFpsValue");
+            const bgRemovalToggle = document.getElementById("bgRemovalToggle");
+            const webcamSelector = document.getElementById("webcamSelector");
+
+            let webcamStream = null;
+            let webcamCaptureInterval = null;
+            let availableCameras = [];
+            let selectedCameraId = null;
+            let currentMode = 'text2video';
+            let serverBgRemovalEnabled = false;
+            let horizontalMirrorEnabled = true;
+            let viewRotation = 0;  // Track view rotation in degrees
+            let contentRotation = 0;  // Track content rotation in degrees
+
+            // FPS tracking
+            let fpsFrameCount = 0;
+            let fpsLastTime = Date.now();
+            let currentFps = 0;
 
             const setText = (element, value) => {
                 if (element) {
@@ -740,6 +918,9 @@
                 const value = Number(denoisingStrengthInput.value).toFixed(2);
                 setText(denoisingStrengthValue, value);
             });
+
+            // Initialize denoising strength display
+            setText(denoisingStrengthValue, Number(denoisingStrengthInput.value).toFixed(2));
             timestepShiftInput.addEventListener("input", () => {
                 const value = Number(timestepShiftInput.value).toFixed(2);
                 setText(timestepShiftValue, value);
@@ -752,7 +933,376 @@
                 const value = String(Number(numDenoisingStepsInput.value) || 6);
                 setText(numDenoisingStepsValue, value);
             });
-            
+
+            webcamFpsInput.addEventListener("input", () => {
+                const value = String(Number(webcamFpsInput.value) || 4);
+                setText(webcamFpsValue, value);
+            });
+
+            // Frame dropping controls
+            const dropFramesToggle = document.getElementById("dropFramesToggle");
+            const maxQueueMultiplierInput = document.getElementById("maxQueueMultiplier");
+            const maxQueueMultiplierValue = document.getElementById("maxQueueMultiplierValue");
+            let dropFramesEnabled = true;
+            let maxQueueMultiplier = 2.0;
+
+            maxQueueMultiplierInput.addEventListener("input", () => {
+                maxQueueMultiplier = Number(maxQueueMultiplierInput.value);
+                setText(maxQueueMultiplierValue, String(maxQueueMultiplier));
+            });
+
+            dropFramesToggle.addEventListener("change", () => {
+                dropFramesEnabled = dropFramesToggle.checked;
+                log(dropFramesEnabled ? "Frame dropping enabled" : "Frame dropping disabled");
+            });
+
+            // Background removal toggle
+            bgRemovalToggle.addEventListener("change", () => {
+                serverBgRemovalEnabled = bgRemovalToggle.checked;
+                log(serverBgRemovalEnabled ? "Server-side background removal enabled" : "Server-side background removal disabled");
+            });
+
+            // Horizontal mirror toggle
+            const horizontalMirrorToggle = document.getElementById("horizontalMirrorToggle");
+            horizontalMirrorToggle.addEventListener("change", () => {
+                horizontalMirrorEnabled = horizontalMirrorToggle.checked;
+                log(horizontalMirrorEnabled ? "Horizontal mirror enabled" : "Horizontal mirror disabled");
+            });
+
+            // Canvas rotation and fullscreen controls
+            const rotateViewLeftBtn = document.getElementById("rotateViewLeftBtn");
+            const rotateViewRightBtn = document.getElementById("rotateViewRightBtn");
+            const rotateContentLeftBtn = document.getElementById("rotateContentLeftBtn");
+            const rotateContentRightBtn = document.getElementById("rotateContentRightBtn");
+            const fillScreenToggle = document.getElementById("fillScreenToggle");
+            const canvasContainer = document.getElementById("canvasContainer");
+            const canvasWrapper = document.getElementById("canvasWrapper");
+            const videoCanvas = document.getElementById("videoCanvas");
+            let fillScreenEnabled = false;
+
+            const updateRotations = () => {
+                // View rotation rotates the entire container with scaling to fit
+                const viewRotNormalized = Math.abs(viewRotation % 360);
+                const isViewRotated90 = (viewRotNormalized === 90 || viewRotNormalized === 270);
+
+                // Scale down when rotated 90/270 degrees to fit in container (aspect ratio flip)
+                const viewScale = isViewRotated90 ? 0.577 : 1; // 0.577 ≈ 9/16 (height/width ratio)
+                canvasContainer.style.transform = `rotate(${viewRotation}deg) scale(${viewScale})`;
+
+                // Content rotation rotates just the canvas with scaling
+                const contentRotNormalized = Math.abs(contentRotation % 360);
+                const isContentRotated90 = (contentRotNormalized === 90 || contentRotNormalized === 270);
+                const contentScale = isContentRotated90 ? 0.577 : 1;
+                videoCanvas.style.transform = `rotate(${contentRotation}deg) scale(${contentScale})`;
+            };
+
+            const updateFillScreen = () => {
+                if (fillScreenEnabled) {
+                    // Fill screen with cover behavior (no distortion, fills available space)
+                    canvasContainer.style.position = 'fixed';
+                    canvasContainer.style.top = '0';
+                    canvasContainer.style.left = '0';
+                    canvasContainer.style.width = '100vw';
+                    canvasContainer.style.height = '100vh';
+                    canvasContainer.style.zIndex = '10000';
+                    canvasContainer.style.borderRadius = '0';
+                    canvasContainer.style.margin = '0';
+                    canvasContainer.style.padding = '0';
+
+                    videoCanvas.style.width = '100%';
+                    videoCanvas.style.height = '100%';
+                    videoCanvas.style.objectFit = 'cover';
+                    videoCanvas.style.display = 'block';
+
+                    log("Fill screen enabled");
+                } else {
+                    // Return to normal layout
+                    canvasContainer.style.position = 'static';
+                    canvasContainer.style.width = '100%';
+                    canvasContainer.style.height = 'auto';
+                    canvasContainer.style.zIndex = 'auto';
+                    canvasContainer.style.borderRadius = '12px';
+
+                    videoCanvas.style.width = '100%';
+                    videoCanvas.style.height = 'auto';
+                    videoCanvas.style.objectFit = 'contain';
+
+                    log("Fill screen disabled");
+                }
+            };
+
+            rotateViewLeftBtn.addEventListener("click", () => {
+                viewRotation = (viewRotation - 90) % 360;
+                updateRotations();
+                log(`View rotated: ${viewRotation}°`);
+            });
+
+            rotateViewRightBtn.addEventListener("click", () => {
+                viewRotation = (viewRotation + 90) % 360;
+                updateRotations();
+                log(`View rotated: ${viewRotation}°`);
+            });
+
+            rotateContentLeftBtn.addEventListener("click", () => {
+                contentRotation = (contentRotation - 90) % 360;
+                updateRotations();
+                log(`Content rotated: ${contentRotation}°`);
+            });
+
+            rotateContentRightBtn.addEventListener("click", () => {
+                contentRotation = (contentRotation + 90) % 360;
+                updateRotations();
+                log(`Content rotated: ${contentRotation}°`);
+            });
+
+            // Click canvas to toggle fill screen
+            videoCanvas.addEventListener("click", () => {
+                fillScreenEnabled = !fillScreenEnabled;
+                fillScreenToggle.checked = fillScreenEnabled;
+                updateFillScreen();
+            });
+
+            // Fill screen checkbox toggle
+            fillScreenToggle.addEventListener("change", () => {
+                fillScreenEnabled = fillScreenToggle.checked;
+                updateFillScreen();
+            });
+
+            // Browser fullscreen button
+            const browserFullscreenBtn = document.getElementById("browserFullscreenBtn");
+
+            browserFullscreenBtn.addEventListener("click", () => {
+                if (!document.fullscreenElement) {
+                    // Enter fullscreen
+                    canvasContainer.requestFullscreen().then(() => {
+                        browserFullscreenBtn.textContent = "⛶ Exit Fullscreen";
+                        log("Entered browser fullscreen");
+                    }).catch(err => {
+                        console.error("Error entering fullscreen:", err);
+                        updateStatus("Could not enter fullscreen: " + err.message);
+                    });
+                } else {
+                    // Exit fullscreen
+                    document.exitFullscreen().then(() => {
+                        browserFullscreenBtn.textContent = "⛶ Fullscreen";
+                        log("Exited browser fullscreen");
+                    });
+                }
+            });
+
+            // Update button text when fullscreen changes (e.g., user presses ESC)
+            document.addEventListener("fullscreenchange", () => {
+                if (!document.fullscreenElement) {
+                    browserFullscreenBtn.textContent = "⛶ Fullscreen";
+                } else {
+                    browserFullscreenBtn.textContent = "⛶ Exit Fullscreen";
+                }
+            });
+
+            // Model selection
+            let currentModel = '14b';
+            const modelRadios = document.querySelectorAll('input[name="model"]');
+
+            modelRadios.forEach(radio => {
+                radio.addEventListener("change", (e) => {
+                    currentModel = e.target.value;
+                    const modelName = currentModel === '14b' ? 'Krea Realtime 14B (11 fps)' : 'Self-Forcing 1.3B (faster)';
+                    log(`Model selected: ${modelName}`);
+                    updateStatus(`✓ Model changed to ${modelName}. Will load on next generation.`);
+                });
+            });
+
+            // Mode switching logic
+            modeRadios.forEach(radio => {
+                radio.addEventListener("change", (e) => {
+                    currentMode = e.target.value;
+                    updateUIForMode();
+                });
+            });
+
+            // Webcam selector change event
+            webcamSelector.addEventListener("change", async (e) => {
+                selectedCameraId = e.target.value;
+                log(`Camera changed to: ${e.target.options[e.target.selectedIndex].text}`);
+
+                // If webcam is already running, restart it with the new camera
+                if (webcamStream) {
+                    stopWebcam();
+                    await startWebcam();
+                }
+            });
+
+            function updateUIForMode() {
+                if (currentMode === 'webcam') {
+                    webcamContainer.style.display = 'block';
+                    webcamDisplayContainer.style.display = 'block';
+                    videoUploadContainer.style.display = 'none';
+                    if (startFrameContainer) startFrameContainer.style.display = 'none';
+                    denoisingStrengthContainer.style.display = 'flex';
+                    // Auto-start webcam when switching to webcam mode
+                    if (!webcamStream) {
+                        startWebcam();
+                    }
+                } else {
+                    // Stop webcam when switching away from webcam mode
+                    if (webcamStream) {
+                        stopWebcam();
+                    }
+                    webcamContainer.style.display = 'none';
+                    webcamDisplayContainer.style.display = 'none';
+                    videoUploadContainer.style.display = 'block';
+                    if (startFrameContainer) startFrameContainer.style.display = 'block';
+                    if (currentMode === 'video2video' && uploadedVideoPath) {
+                        denoisingStrengthContainer.style.display = 'flex';
+                    } else if (currentMode === 'text2video') {
+                        denoisingStrengthContainer.style.display = 'none';
+                    }
+                }
+            }
+
+            // Webcam control functions
+            async function enumerateCameras() {
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    availableCameras = devices.filter(device => device.kind === 'videoinput');
+
+                    // Populate the selector
+                    webcamSelector.innerHTML = '';
+                    availableCameras.forEach((camera, index) => {
+                        const option = document.createElement('option');
+                        option.value = camera.deviceId;
+                        option.textContent = camera.label || `Camera ${index + 1}`;
+                        webcamSelector.appendChild(option);
+                    });
+
+                    // Select first camera by default
+                    if (availableCameras.length > 0) {
+                        selectedCameraId = availableCameras[0].deviceId;
+                        webcamSelector.value = selectedCameraId;
+                        log(`Found ${availableCameras.length} camera(s)`);
+                    } else {
+                        webcamSelector.innerHTML = '<option value="">No cameras found</option>';
+                        log("No cameras found");
+                    }
+                } catch (error) {
+                    console.error("Error enumerating cameras:", error);
+                    webcamSelector.innerHTML = '<option value="">Error loading cameras</option>';
+                }
+            }
+
+            async function startWebcam() {
+                try {
+                    const constraints = {
+                        video: {
+                            width: { ideal: 832 },
+                            height: { ideal: 480 }
+                        }
+                    };
+
+                    // Use selected camera if available
+                    if (selectedCameraId) {
+                        constraints.video.deviceId = { exact: selectedCameraId };
+                    }
+
+                    webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
+                    // Set stream for both the hidden capture element and the visible display
+                    webcamPreview.srcObject = webcamStream;
+                    webcamDisplayPreview.srcObject = webcamStream;
+                    log("Webcam started");
+
+                    // After getting permission, enumerate cameras to get proper labels (Firefox needs this)
+                    if (availableCameras.length === 0 || !availableCameras[0].label) {
+                        await enumerateCameras();
+                    }
+                } catch (error) {
+                    console.error("Error accessing webcam:", error);
+                    updateStatus("Failed to access webcam: " + error.message);
+                }
+            }
+
+            function stopWebcam() {
+                if (webcamStream) {
+                    webcamStream.getTracks().forEach(track => track.stop());
+                    webcamStream = null;
+                    webcamPreview.srcObject = null;
+                    webcamDisplayPreview.srcObject = null;
+                }
+                if (webcamCaptureInterval) {
+                    clearInterval(webcamCaptureInterval);
+                    webcamCaptureInterval = null;
+                }
+                log("Webcam stopped");
+            }
+
+            function captureWebcamFrame() {
+                if (!webcamStream || !websocket || websocket.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+
+                // Create a canvas to capture the frame
+                const canvas = document.createElement('canvas');
+                const targetWidth = Math.round(Number(widthInput.value) / 8) * 8;
+                const targetHeight = Math.round(Number(heightInput.value) / 8) * 8;
+                canvas.width = targetWidth;
+                canvas.height = targetHeight;
+                const ctx = canvas.getContext('2d');
+
+                // Calculate center crop from webcam preview
+                const videoWidth = webcamPreview.videoWidth;
+                const videoHeight = webcamPreview.videoHeight;
+                const videoAspect = videoWidth / videoHeight;
+                const targetAspect = targetWidth / targetHeight;
+
+                let sx, sy, sWidth, sHeight;
+
+                if (videoAspect > targetAspect) {
+                    // Video is wider - crop sides
+                    sHeight = videoHeight;
+                    sWidth = videoHeight * targetAspect;
+                    sx = (videoWidth - sWidth) / 2;
+                    sy = 0;
+                } else {
+                    // Video is taller - crop top/bottom
+                    sWidth = videoWidth;
+                    sHeight = videoWidth / targetAspect;
+                    sx = 0;
+                    sy = (videoHeight - sHeight) / 2;
+                }
+
+                // Draw center-cropped video frame to canvas
+                ctx.drawImage(webcamPreview, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
+
+                // Convert to base64 JPEG
+                canvas.toBlob((blob) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64data = reader.result.split(',')[1];
+
+                        // Send frame via WebSocket
+                        const payload = {
+                            image: base64data,
+                            timestamp: Date.now(),
+                            strength: Number(denoisingStrengthInput.value)
+                        };
+
+                        try {
+                            const encoderCandidate =
+                                (window.msgpack && typeof window.msgpack.encode === "function" && ((value) => window.msgpack.encode(value))) ||
+                                (window.MessagePack && typeof window.MessagePack.encode === "function" && ((value) => window.MessagePack.encode(value))) ||
+                                builtinMsgPackEncode;
+                            const encoded = encoderCandidate(payload);
+                            const payloadBuffer = encoded instanceof Uint8Array
+                                ? encoded
+                                : new Uint8Array(encoded.buffer ? encoded.buffer : encoded);
+                            websocket.send(payloadBuffer);
+                        } catch (error) {
+                            console.error("Failed to send webcam frame", error);
+                        }
+                    };
+                    reader.readAsDataURL(blob);
+                }, 'image/jpeg', 0.90);
+            }
+
             startFrameInput.addEventListener("change", async () => {
                 const file = startFrameInput.files[0];
                 if (!file) {
@@ -888,6 +1438,17 @@
                 if (bitmap.close) {
                     bitmap.close();
                 }
+
+                // Update FPS meter
+                fpsFrameCount++;
+                const now = Date.now();
+                const elapsed = now - fpsLastTime;
+                if (elapsed >= 1000) {
+                    currentFps = (fpsFrameCount / elapsed * 1000).toFixed(1);
+                    console.log(`Generation FPS: ${currentFps}`);
+                    fpsFrameCount = 0;
+                    fpsLastTime = now;
+                }
             };
 
             const downloadVideo = async () => {
@@ -979,12 +1540,24 @@
                     closeSocket("missing prompt");
                     return;
                 }
+
+                // Webcam mode validation
+                if (currentMode === 'webcam' && !webcamStream) {
+                    updateStatus("Please start the webcam before generating.");
+                    setButtons(false);
+                    stopPlaybackLoop();
+                    closeSocket("webcam not started");
+                    return;
+                }
+
                 const width = Math.max(64, Math.round(Number(widthInput.value) / 8) * 8);
                 const height = Math.max(64, Math.round(Number(heightInput.value) / 8) * 8);
                 widthInput.value = width;
                 heightInput.value = height;
 
                 const payload = {
+                    mode: currentMode,
+                    model: currentModel,
                     prompt: prompt,
                     width: width,
                     height: height,
@@ -994,15 +1567,37 @@
                 };
                 syncNumBlocksDisplay(payload.num_blocks);
 
-                // Include uploaded video path if available
-                if (uploadedVideoPath) {
-                    payload.input_video = uploadedVideoPath;
+                // Webcam mode
+                if (currentMode === 'webcam') {
+                    payload.webcam_mode = true;
+                    payload.webcam_fps = Number(webcamFpsInput.value);
                     payload.strength = Number(denoisingStrengthInput.value);
-                }
+                    payload.remove_background = serverBgRemovalEnabled;  // Server-side background removal flag
+                    payload.horizontal_mirror = horizontalMirrorEnabled;  // Horizontal mirror flag
+                    payload.drop_frames = dropFramesEnabled;  // Frame dropping flag
+                    payload.max_queue_multiplier = maxQueueMultiplier;  // Max queue size multiplier
 
-                // Include uploaded start frame path if available
-                if (uploadedStartFramePath) {
-                    payload.start_frame = uploadedStartFramePath;
+                    // Start capturing and sending webcam frames
+                    const webcamFps = Number(webcamFpsInput.value);
+                    // Always clear any existing interval first
+                    if (webcamCaptureInterval) {
+                        clearInterval(webcamCaptureInterval);
+                        webcamCaptureInterval = null;
+                        log("Cleared existing webcam capture interval");
+                    }
+                    webcamCaptureInterval = setInterval(captureWebcamFrame, 1000 / webcamFps);
+                    log("Started webcam capture at " + webcamFps + " fps (interval ID: " + webcamCaptureInterval + ")");
+                } else {
+                    // Include uploaded video path if available
+                    if (uploadedVideoPath) {
+                        payload.input_video = uploadedVideoPath;
+                        payload.strength = Number(denoisingStrengthInput.value);
+                    }
+
+                    // Include uploaded start frame path if available
+                    if (uploadedStartFramePath) {
+                        payload.start_frame = uploadedStartFramePath;
+                    }
                 }
 
                 const rawSeed = seedInput.value.trim();
@@ -1019,6 +1614,10 @@
                 playbackFps = Number(playbackSlider.value) || 8;
                 setText(playbackValue, String(playbackFps));
                 startPlaybackLoop();
+
+                fpsFrameCount = 0;
+                fpsLastTime = Date.now();
+                currentFps = 0;
 
                 try {
                     const encoderCandidate =
@@ -1079,8 +1678,19 @@
                                 }
                                 enableDownload(true);
                                 updateStatus("Generation completed. Video ready to download.");
+
+                                // Stop webcam capture if in webcam mode
+                                if (currentMode === 'webcam' && webcamCaptureInterval) {
+                                    clearInterval(webcamCaptureInterval);
+                                    webcamCaptureInterval = null;
+                                    log("Webcam capture stopped (generation completed)");
+                                }
+
+                                // Re-enable Start button for new generation, disable Stop
+                                setButtons(false);
                             } else if (message.error) {
                                 updateStatus("Server error: " + message.error);
+                                setButtons(false);
                             } else if (typeof message.status === "string") {
                                 updateStatus(message.status);
                             }
@@ -1155,6 +1765,14 @@
                 closeSocket("stopped by user");
                 setButtons(false);
                 stopPlaybackLoop();
+
+                // Stop webcam capture if running
+                if (webcamCaptureInterval) {
+                    clearInterval(webcamCaptureInterval);
+                    webcamCaptureInterval = null;
+                    log("Stopped webcam capture");
+                }
+
                 // Enable download button after stop
                 if (currentSessionId) {
                     enableDownload(true);
