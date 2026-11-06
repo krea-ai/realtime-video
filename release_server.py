@@ -76,7 +76,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Global storage for session frames
-session_frames_storage: Dict[str, List[torch.Tensor]] = {}
+session_frames_storage: Dict[str, List[np.ndarray]] = {}  # per session: uint8 [n, H, W, 3] blocks
 session_frame_locks: Dict[str, threading.Lock] = {}
 
 UUID_NIL = str(uuid.UUID(int=0))
@@ -838,7 +838,7 @@ async def download_video(session_id: str):
     try:
         # Combine all frame tensors
         # frames is a list of tensors, each with shape [1, num_frames, 3, H, W]
-        all_frames = torch.cat(frames, dim=1)  # Shape: [1, total_frames, 3, H, W]
+        all_frames = np.concatenate(frames, axis=0)  # Shape: [total_frames, H, W, 3], uint8
         
         # Save to MP4 using ffmpeg
         mp4_data = save_video_to_bytes(all_frames, fps=16)
@@ -867,12 +867,9 @@ async def download_video(session_id: str):
 def save_video_to_bytes(pixels: torch.Tensor, fps: int = 24) -> Optional[bytes]:
     """Save video frames to MP4 and return as bytes"""
     try:
-        # pixels shape: [1, num_frames, 3, H, W]
-        video_tensor = pixels[0].cpu().clamp(0, 1)
-        num_frames, _, height, width = video_tensor.shape
-        
-        # Convert to uint8 RGB frames
-        video_np = (video_tensor.permute(0, 2, 3, 1).numpy() * 255).astype(np.uint8)
+        # pixels: uint8 RGB frames, shape [num_frames, H, W, 3]
+        video_np = np.ascontiguousarray(pixels)
+        num_frames, height, width, _ = video_np.shape
         
         # Create a temporary file for output
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
@@ -967,31 +964,29 @@ async def ws_session(websocket: WebSocket, id: str, config: OmegaConf, models: M
                 frame_queue.task_done()
         frame_sender_task = asyncio.create_task(frame_sender())
 
-        async def extract_frame(frames_future: asyncio.Future[torch.Tensor], idx: int, frame_id: str) -> bytes:
+        async def extract_frame(frames_future: asyncio.Future[np.ndarray], idx: int, frame_id: str) -> bytes:
             io = BytesIO()
             frames = await frames_future
-            await loop.run_in_executor(encode_pool, lambda: TF.to_pil_image(frames[0, idx], "RGB").save(io, format='JPEG', quality=90))
+            await loop.run_in_executor(encode_pool, lambda: Image.fromarray(frames[idx]).save(io, format='JPEG', quality=90))
             if websocket.query_params.get("fmt", "jpeg") == "msgpack":
                 return packb({ "image": io.getvalue(), "request_id": frame_id })
             return io.getvalue()
 
         def frame_callback(tensor: torch.Tensor, frame_ids: list[str], event: torch.cuda.Event):
-            def get_cpu_frames():
-                cpu_tensor = torch.zeros_like(tensor, device="cpu", pin_memory=True)
-                download_stream.wait_event(event)
-                with torch.cuda.stream(download_stream):
-                    cpu_tensor.copy_(tensor)
-                return cpu_tensor.add_(1.0).mul_(0.5).clamp_(0.0, 1.0)
-            
             def store_frames():
-                cpu_tensor = torch.zeros_like(tensor, device="cpu", pin_memory=True)
+                # Convert to uint8 on the GPU and copy that to the host: no float math on the CPU, and a quarter
+                # of the bytes of a float32 copy. Runs on the download stream, after the block's frames are ready.
                 download_stream.wait_event(event)
-                with torch.cuda.stream(download_stream):
-                    cpu_tensor.copy_(tensor)
-                normalized = cpu_tensor.add_(1.0).mul_(0.5).clamp_(0.0, 1.0)
+                with torch.inference_mode(), torch.cuda.stream(download_stream):
+                    gpu_u8 = (tensor[0].float() + 1.0).mul_(127.5).clamp_(0, 255).to(torch.uint8)  # [n, 3, H, W]
+                    hwc = gpu_u8.permute(0, 2, 3, 1).contiguous()
+                    cpu_u8 = torch.empty(hwc.shape, dtype=torch.uint8, pin_memory=True)
+                    cpu_u8.copy_(hwc, non_blocking=True)
+                    download_stream.synchronize()
+                frames = cpu_u8.numpy()
                 with session_frame_locks[id]:
-                    session_frames_storage[id].append(normalized.clone())
-                return normalized
+                    session_frames_storage[id].append(frames)
+                return frames
 
             try:
                 # Store frames and also send them
