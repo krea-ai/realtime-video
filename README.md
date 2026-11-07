@@ -135,6 +135,31 @@ uvicorn release_server:app --host 0.0.0.0 --port 8000
 - `DO_COMPILE=false` - Disable `torch.compile` for faster startup but slower inference
 - `CONFIG` - Path to custom config file
 
+#### 5. SpecAR (optional)
+
+[SpecAR](https://github.com/statite-ai/SpecAR) speeds a session up by letting the Self-Forcing 1.3B model generate
+most blocks: the 14B model generates `specar_k` evenly spaced blocks and the 1.3B drafter generates the rest. It
+works for text-to-video, a start frame and an input video.
+
+```bash
+pip install "specar[krea] @ git+https://github.com/statite-ai/SpecAR"
+huggingface-cli download gdhe17/Self-Forcing checkpoints/self_forcing_dmd.pt --local-dir .
+export SPECAR_DRAFTER_CKPT=checkpoints/self_forcing_dmd.pt
+uvicorn release_server:app --host 0.0.0.0 --port 8000
+```
+
+A session opts in by sending `specar_k` with its generation parameters, for example `"specar_k": 7` with
+`"num_blocks": 36`. `curl http://localhost:8000/specar` reports whether SpecAR is available.
+
+- Without `SPECAR_DRAFTER_CKPT` nothing changes: the server loads and runs exactly as before.
+- Sessions without `specar_k` run the stock path, also when SpecAR is loaded.
+- If the drafter or the `specar` package is missing, or the session uses webcam mode, a `specar_k` request runs the
+  stock path and the server logs why.
+- SpecAR sessions keep their own KV and cross-attention caches (about 9 GB of GPU memory per live session) and run
+  the uncompiled models, so `DO_COMPILE=true` keeps working for stock sessions.
+- The adapter is `specar_adapter.py`; the generation algorithm lives in the `specar` package. SpecAR's Krea backend
+  is CC BY-NC-SA 4.0, like this repository.
+
 Stop the server with `Ctrl+C`.
 
 ---
